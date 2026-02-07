@@ -1,0 +1,48 @@
+{
+  "AR_ELEKTRIK": {
+    "id": "AR ELEKTRİK",
+    "firmaAdi": "Çorum",
+    "sehir": "MERKEZ",
+    "ilce": "ONER KESEN",
+    "yetkili": "Eski Müşteri",
+    "tel": "a.coskun@tibcon.com.tr",
+    "adres": "ADNAN COŞKUN",
+    "bolge": 5394168060,
+    "potansiyel": "ANKARA YOLU BULVARI"
+  },
+  "OTP_PANO": {
+    "id": "OTP PANO",
+    "firmaAdi": "Ankara",
+    "sehir": "ÇANKAYA",
+    "ilce": "FERHAT BEY",
+    "yetkili": "Potansiyel",
+    "tel": "e.sahin@tibcon.com.tr",
+    "adres": "EMRE ŞAHİN",
+    "bolge": 5356486659,
+    "potansiyel": "ULUS NO:44"
+  },
+  "SAMPLE_HEAD": [
+    {
+      "id": "AR ELEKTRİK",
+      "firmaAdi": "Çorum",
+      "sehir": "MERKEZ",
+      "ilce": "ONER KESEN",
+      "yetkili": "Eski Müşteri",
+      "tel": "a.coskun@tibcon.com.tr",
+      "adres": "ADNAN COŞKUN",
+      "bolge": 5394168060,
+      "potansiyel": "ANKARA YOLU BULVARI"
+    },
+    {
+      "id": "OTP PANO",
+      "firmaAdi": "Ankara",
+      "sehir": "ÇANKAYA",
+      "ilce": "FERHAT BEY",
+      "yetkili": "Potansiyel",
+      "tel": "e.sahin@tibcon.com.tr",
+      "adres": "EMRE ŞAHİN",
+      "bolge": 5356486659,
+      "potansiyel": "ULUS NO:44"
+    }
+  ]
+}

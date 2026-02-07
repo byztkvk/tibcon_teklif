@@ -1,0 +1,24 @@
+{
+  "keys": [
+    "id",
+    "firmaAdi",
+    "sehir",
+    "ilce",
+    "yetkili",
+    "tel",
+    "adres",
+    "bolge",
+    "potansiyel"
+  ],
+  "sample": {
+    "id": "AR ELEKTRİK",
+    "firmaAdi": "Çorum",
+    "sehir": "MERKEZ",
+    "ilce": "ONER KESEN",
+    "yetkili": "Eski Müşteri",
+    "tel": "a.coskun@tibcon.com.tr",
+    "adres": "ADNAN COŞKUN",
+    "bolge": 5394168060,
+    "potansiyel": "ANKARA YOLU BULVARI"
+  }
+}

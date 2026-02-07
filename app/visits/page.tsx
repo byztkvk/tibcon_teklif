@@ -1,0 +1,390 @@
+"use client";
+
+import { useState, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
+import { listVisits } from "@/lib/sheets";
+import LoadingOverlay from "@/components/LoadingOverlay";
+
+export default function VisitsPage() {
+    const router = useRouter();
+    const [loading, setLoading] = useState(true);
+    const [session, setSession] = useState<any>(null);
+    const [visits, setVisits] = useState<any[]>([]);
+    const [searchTerm, setSearchTerm] = useState("");
+
+    const [viewMode, setViewMode] = useState<"list" | "calendar">("calendar");
+    const [currentDate, setCurrentDate] = useState(new Date());
+    const [selectedVisit, setSelectedVisit] = useState<any>(null);
+
+    useEffect(() => {
+        const raw = localStorage.getItem("tibcon_session");
+        if (raw) setSession(JSON.parse(raw));
+
+        const fetchVisits = async () => {
+            setLoading(true);
+            try {
+                const res = await listVisits();
+                if (res?.visits) {
+                    setVisits(res.visits);
+                }
+            } catch (error) {
+                console.error("Visits fetch error:", error);
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchVisits();
+    }, []);
+
+    const filteredVisits = useMemo(() => {
+        let list = visits;
+        const role = session?.role;
+        const email = session?.email ? session.email.toLowerCase() : "";
+        const fullName = session?.fullName;
+
+        if (role === "sales") {
+            list = list.filter(v =>
+                (v.SatisPersoneliEmail && v.SatisPersoneliEmail.toLowerCase() === email) ||
+                (v.SatisPersoneli === fullName)
+            );
+        } else if (role === "region_manager") {
+            const region = session?.region;
+            list = list.filter(v =>
+                v.Bölge === region ||
+                (v.SatisPersoneliEmail && v.SatisPersoneliEmail.toLowerCase() === email) ||
+                (v.SatisPersoneli === fullName)
+            );
+        }
+
+        if (searchTerm) {
+            const lower = searchTerm.toLowerCase();
+            list = list.filter(v =>
+                v.FirmaAdi?.toLowerCase().includes(lower) ||
+                v.İl?.toLowerCase().includes(lower) ||
+                v.ZiyaretNot?.toLowerCase().includes(lower)
+            );
+        }
+        return [...list].sort((a, b) => new Date(b.ZiyaretTarih).getTime() - new Date(a.ZiyaretTarih).getTime());
+    }, [visits, searchTerm, session]);
+
+    const formatDate = (dateStr: string) => {
+        if (!dateStr) return "-";
+        try {
+            return new Date(dateStr).toLocaleDateString("tr-TR");
+        } catch {
+            return dateStr;
+        }
+    };
+
+    // Calendar logic
+    const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
+    const firstDayOfMonth = (year: number, month: number) => {
+        let day = new Date(year, month, 1).getDay();
+        return day === 0 ? 6 : day - 1; // 0 (Mon) to 6 (Sun)
+    };
+
+    const renderCalendar = () => {
+        const year = currentDate.getFullYear();
+        const month = currentDate.getMonth();
+        const totalDays = daysInMonth(year, month);
+        const startDay = firstDayOfMonth(year, month);
+        const monthName = new Intl.DateTimeFormat('tr-TR', { month: 'long' }).format(currentDate);
+
+        const days = [];
+        // Empty cells for the start
+        for (let i = 0; i < startDay; i++) {
+            days.push(<div key={`empty-${i}`} style={{ background: "#fcfcfc", border: "1px solid #eee" }}></div>);
+        }
+
+        // Days
+        for (let d = 1; d <= totalDays; d++) {
+            const dayStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            const dayVisits = filteredVisits.filter(v => {
+                const vDate = new Date(v.ZiyaretTarih);
+                const compareDate = new Date(dayStr);
+                return vDate.getFullYear() === compareDate.getFullYear() &&
+                    vDate.getMonth() === compareDate.getMonth() &&
+                    vDate.getDate() === compareDate.getDate();
+            });
+
+            days.push(
+                <div key={d} style={{
+                    minHeight: "140px",
+                    background: "white",
+                    border: "1px solid #eee",
+                    display: "flex",
+                    flexDirection: "column",
+                    padding: "8px"
+                }}>
+                    <div style={{ fontWeight: 700, fontSize: "0.9rem", color: dayVisits.length > 0 ? "var(--tibcon-red)" : "#adb5bd", marginBottom: "8px" }}>
+                        {d}
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px", overflowY: "auto", flex: 1 }}>
+                        {dayVisits.map((v, i) => (
+                            <div
+                                key={i}
+                                onClick={() => setSelectedVisit(v)}
+                                style={{
+                                    background: "rgba(180, 0, 0, 0.08)",
+                                    color: "var(--tibcon-red)",
+                                    fontSize: "0.75rem",
+                                    padding: "4px 8px",
+                                    borderRadius: "4px",
+                                    fontWeight: 700,
+                                    borderLeft: "3px solid var(--tibcon-red)",
+                                    whiteSpace: "nowrap",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    cursor: "pointer"
+                                }}
+                                title={`${v.FirmaAdi} - ${v.SatisPersoneli}`}
+                            >
+                                {v.FirmaAdi}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        return (
+            <div style={{ width: "100%" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+                    <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
+                        <h2 className="outfit" style={{ margin: 0, textTransform: "capitalize", fontSize: "1.8rem" }}>{monthName} {year}</h2>
+                    </div>
+                    <div style={{ display: "flex", gap: "0.5rem" }}>
+                        <button onClick={() => setCurrentDate(new Date(year, month - 1, 1))} className="tibcon-btn tibcon-btn-outline" style={{ padding: "0.5rem 1rem" }}>Geri</button>
+                        <button onClick={() => setCurrentDate(new Date())} className="tibcon-btn tibcon-btn-outline" style={{ padding: "0.5rem 1rem" }}>Bugün</button>
+                        <button onClick={() => setCurrentDate(new Date(year, month + 1, 1))} className="tibcon-btn tibcon-btn-outline" style={{ padding: "0.5rem 1rem" }}>İleri</button>
+                    </div>
+                </div>
+
+                <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(7, 1fr)",
+                    border: "1px solid #eee",
+                    borderRadius: "12px",
+                    overflow: "hidden",
+                    background: "#eee",
+                    gap: "1px"
+                }}>
+                    {["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"].map(day => (
+                        <div key={day} style={{ background: "#f8f9fa", padding: "12px", textAlign: "center", fontWeight: 700, fontSize: "0.8rem", color: "#666" }}>
+                            {day}
+                        </div>
+                    ))}
+                    {days}
+                </div>
+            </div>
+        );
+    };
+
+    return (
+        <div className="page-container">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "2rem", flexWrap: "wrap", gap: "1rem" }}>
+                <div>
+                    <button onClick={() => router.push("/")} className="tibcon-btn tibcon-btn-outline" style={{ marginBottom: "1rem" }}>
+                        ← Ana Sayfa
+                    </button>
+                    <h1 className="title-xl outfit">Ziyaretlerim</h1>
+                    <p className="text-muted">Tibcon kurumsal ziyaret takip ve takvim sistemi.</p>
+                </div>
+
+                <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
+                    <div style={{ display: "flex", background: "#f0f0f0", padding: "4px", borderRadius: "10px" }}>
+                        <button
+                            style={{
+                                padding: "6px 16px", borderRadius: "8px", border: "none",
+                                background: viewMode === "calendar" ? "white" : "transparent",
+                                color: viewMode === "calendar" ? "var(--tibcon-red)" : "#666",
+                                fontWeight: 700, cursor: "pointer", boxShadow: viewMode === "calendar" ? "0 2px 4px rgba(0,0,0,0.1)" : "none"
+                            }}
+                            onClick={() => setViewMode("calendar")}
+                        >
+                            📅 Takvim
+                        </button>
+                        <button
+                            style={{
+                                padding: "6px 16px", borderRadius: "8px", border: "none",
+                                background: viewMode === "list" ? "white" : "transparent",
+                                color: viewMode === "list" ? "var(--tibcon-red)" : "#666",
+                                fontWeight: 700, cursor: "pointer", boxShadow: viewMode === "list" ? "0 2px 4px rgba(0,0,0,0.1)" : "none"
+                            }}
+                            onClick={() => setViewMode("list")}
+                        >
+                            📋 Liste
+                        </button>
+                    </div>
+
+                    <div style={{ position: "relative" }}>
+                        <input
+                            type="text"
+                            placeholder="Filtrele..."
+                            value={searchTerm}
+                            onChange={e => setSearchTerm(e.target.value)}
+                            style={{
+                                padding: "0.75rem 1rem", borderRadius: "10px",
+                                border: "1px solid #ddd", width: "200px", fontSize: "0.9rem"
+                            }}
+                        />
+                    </div>
+
+                    <button onClick={() => router.push("/visits/new")} className="tibcon-btn tibcon-btn-primary">
+                        + Yeni Ziyaret
+                    </button>
+                </div>
+            </div>
+
+            <div className="premium-card" style={{ padding: viewMode === "calendar" ? "2rem" : "0", overflow: "visible" }}>
+                {loading ? (
+                    <div style={{ padding: "4rem", textAlign: "center" }}>Veriler yükleniyor...</div>
+                ) : filteredVisits.length === 0 && !searchTerm ? (
+                    <div style={{ padding: "4rem", textAlign: "center" }}>
+                        <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🚗</div>
+                        <h3 className="outfit">Henüz ziyaret kaydı yok</h3>
+                        <p className="text-muted">Sahadaki çalışmalarınızı kayıt altına alarak başlayın.</p>
+                    </div>
+                ) : (
+                    viewMode === "calendar" ? renderCalendar() : (
+                        <div style={{ overflowX: "auto" }}>
+                            <table className="premium-table">
+                                <thead>
+                                    <tr>
+                                        <th>Tarih</th>
+                                        <th>Firma</th>
+                                        <th>Konum</th>
+                                        <th>Personel</th>
+                                        <th>Yetkili</th>
+                                        <th>Not</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredVisits.map((v, idx) => (
+                                        <tr key={idx} onClick={() => setSelectedVisit(v)} style={{ cursor: "pointer" }}>
+                                            <td style={{ fontWeight: 700 }}>{formatDate(v.ZiyaretTarih)}</td>
+                                            <td>
+                                                <div style={{ fontWeight: 700 }}>{v.FirmaAdi}</div>
+                                                <div style={{ fontSize: "0.7rem", opacity: 0.7 }}>{v.FirmaStatu || "Müşteri"}</div>
+                                            </td>
+                                            <td>{v.İl || v.Sehir} / {v.İlçe || v.ilce}</td>
+                                            <td>
+                                                <div style={{ fontWeight: 600, fontSize: "0.85rem" }}>{v.SatisPersoneli}</div>
+                                                <div style={{ fontSize: "0.7rem", color: "#666" }}>{v.Bölge}</div>
+                                            </td>
+                                            <td>{v.YetkiliKisi || v.Yetkili}</td>
+                                            <td style={{ maxWidth: "250px", fontSize: "0.85rem" }}>{v.ZiyaretNot}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )
+                )}
+            </div>
+            {/* Visit Detail Modal */}
+            {selectedVisit && (
+                <div style={{
+                    position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+                    background: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center",
+                    alignItems: "center", zIndex: 1000, padding: "2rem"
+                }} onClick={() => setSelectedVisit(null)}>
+                    <div style={{
+                        background: "white", borderRadius: "20px", width: "100%", maxWidth: "600px",
+                        padding: "2rem", boxShadow: "0 20px 40px rgba(0,0,0,0.2)", position: "relative",
+                        animation: "modalFadeUp 0.3s ease-out"
+                    }} onClick={e => e.stopPropagation()}>
+                        <button
+                            onClick={() => setSelectedVisit(null)}
+                            style={{
+                                position: "absolute", top: "1rem", right: "1rem", border: "none",
+                                background: "#f0f0f0", width: "32px", height: "32px", borderRadius: "50%",
+                                cursor: "pointer", fontSize: "1.2rem", color: "#666"
+                            }}
+                        >×</button>
+
+                        <div style={{ marginBottom: "1.5rem" }}>
+                            <div className="badge" style={{ background: "rgba(180, 0, 0, 0.1)", color: "var(--tibcon-red)", marginBottom: "0.5rem", borderRadius: "20px", padding: "4px 12px", fontSize: "0.75rem", fontWeight: 700, display: "inline-block" }}>
+                                {selectedVisit.FirmaStatu || "Müşteri"}
+                            </div>
+                            <h2 className="outfit" style={{ margin: 0, fontSize: "2rem" }}>{selectedVisit.FirmaAdi}</h2>
+                            <p style={{ color: "#666", marginTop: "0.5rem" }}>
+                                📅 {formatDate(selectedVisit.ZiyaretTarih)} | 📍 {selectedVisit.İl || selectedVisit.Sehir} / {selectedVisit.İlçe || selectedVisit.ilce}
+                            </p>
+                        </div>
+
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem", marginBottom: "2rem" }}>
+                            <div>
+                                <h4 style={{ margin: "0 0 0.5rem 0", color: "#888", fontSize: "0.8rem", textTransform: "uppercase" }}>Ziyaret Eden</h4>
+                                <p style={{ margin: 0, fontWeight: 700 }}>{selectedVisit.SatisPersoneli}</p>
+                                <p style={{ margin: "0.2rem 0 0 0", fontSize: "0.85rem", color: "#666" }}>{selectedVisit.Bölge}</p>
+                            </div>
+                            <div>
+                                <h4 style={{ margin: "0 0 0.5rem 0", color: "#888", fontSize: "0.8rem", textTransform: "uppercase" }}>Görüşülen Yetkili</h4>
+                                <p style={{ margin: 0, fontWeight: 700 }}>{selectedVisit.YetkiliKisi || selectedVisit.Yetkili || "-"}</p>
+                                {selectedVisit.Telefon && (
+                                    <p style={{ margin: "0.2rem 0 0 0", fontSize: "0.85rem", color: "var(--tibcon-red)", fontWeight: 600 }}>
+                                        📞 {selectedVisit.Telefon}
+                                    </p>
+                                )}
+                                {selectedVisit.FirmaEmail && (
+                                    <p style={{ margin: "0.2rem 0 0 0", fontSize: "0.85rem", color: "#666" }}>
+                                        ✉️ {selectedVisit.FirmaEmail}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+
+                        {(selectedVisit.VergiDairesi || selectedVisit.VergiNo || selectedVisit.Adres) && (
+                            <div style={{ marginBottom: "2rem", display: "grid", gap: "1rem" }}>
+                                {selectedVisit.Adres && (
+                                    <div>
+                                        <h4 style={{ margin: "0 0 0.4rem 0", color: "#888", fontSize: "0.8rem", textTransform: "uppercase" }}>Adres</h4>
+                                        <p style={{ margin: 0, fontSize: "0.9rem" }}>{selectedVisit.Adres}</p>
+                                    </div>
+                                )}
+                                {(selectedVisit.VergiDairesi || selectedVisit.VergiNo) && (
+                                    <div style={{ display: "flex", gap: "1.5rem" }}>
+                                        {selectedVisit.VergiDairesi && (
+                                            <div>
+                                                <h4 style={{ margin: "0 0 0.4rem 0", color: "#888", fontSize: "0.8rem", textTransform: "uppercase" }}>V. Dairesi</h4>
+                                                <p style={{ margin: 0, fontSize: "0.9rem" }}>{selectedVisit.VergiDairesi}</p>
+                                            </div>
+                                        )}
+                                        {selectedVisit.VergiNo && (
+                                            <div>
+                                                <h4 style={{ margin: "0 0 0.4rem 0", color: "#888", fontSize: "0.8rem", textTransform: "uppercase" }}>V. No</h4>
+                                                <p style={{ margin: 0, fontSize: "0.9rem" }}>{selectedVisit.VergiNo}</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div style={{ background: "#f8f9fa", padding: "1.5rem", borderRadius: "12px", border: "1px solid #eee" }}>
+                            <h4 style={{ margin: "0 0 1rem 0", color: "#888", fontSize: "0.8rem", textTransform: "uppercase" }}>Ziyaret Notları</h4>
+                            <p style={{ margin: 0, fontSize: "1rem", lineHeight: "1.6", color: "var(--tibcon-anth)" }}>
+                                {selectedVisit.ZiyaretNot}
+                            </p>
+                        </div>
+
+                        <div style={{ marginTop: "2rem", display: "flex", justifyContent: "flex-end" }}>
+                            <button onClick={() => setSelectedVisit(null)} className="tibcon-btn tibcon-btn-primary">
+                                Kapat
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <style jsx>{`
+                @keyframes modalFadeUp {
+                    from { opacity: 0; transform: translateY(20px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+            `}</style>
+            {loading && <LoadingOverlay message="Ziyaret verileri yükleniyor..." />}
+        </div>
+    );
+}
