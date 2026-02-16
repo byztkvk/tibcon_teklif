@@ -5,6 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { listAgenda, saveAgendaItem, deleteAgendaItem, listSalesPoints, AgendaItem } from "@/lib/sheets";
 import LoadingOverlay from "@/components/LoadingOverlay";
 
+type ViewMode = "GRID" | "FOLDER";
+
 export default function AgendaPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -16,8 +18,15 @@ export default function AgendaPage() {
     const [error, setError] = useState<string | null>(null);
     const [loadingMessage, setLoadingMessage] = useState<string | null>(null);
 
-    // Form state
-    const [showNewForm, setShowNewForm] = useState(false);
+    // Navigation State
+    const [viewMode, setViewMode] = useState<ViewMode>("GRID");
+    const [activeFolderId, setActiveFolderId] = useState<string | null>(null); // SalesPointId or "GENERAL"
+
+    // Form state (Generic)
+    const [showNewFolderModal, setShowNewFolderModal] = useState(false);
+    const [newFolderPointId, setNewFolderPointId] = useState("");
+
+    // Form State (Inside Folder)
     const [formData, setFormData] = useState<Partial<AgendaItem>>({
         type: "NOTE",
         date: new Date().toISOString().split("T")[0],
@@ -35,8 +44,8 @@ export default function AgendaPage() {
 
         const pointId = searchParams.get("salesPointId");
         if (pointId) {
-            setFormData(prev => ({ ...prev, salesPointId: pointId }));
-            setShowNewForm(true);
+            setActiveFolderId(pointId);
+            setViewMode("FOLDER");
         }
 
         fetchData(s.email);
@@ -48,7 +57,7 @@ export default function AgendaPage() {
         try {
             const [agendaRes, pointsRes] = await Promise.all([
                 listAgenda(email),
-                listSalesPoints()
+                listSalesPoints() // Sales reps only see their own points if filtered at backend, or we filter here
             ]);
 
             if (agendaRes) setItems(agendaRes.items);
@@ -61,32 +70,154 @@ export default function AgendaPage() {
         }
     }
 
-    async function handleSave() {
+    // --- FOLDER LOGIC ---
+
+    const folders = useMemo(() => {
+        const map = new Map<string, {
+            id: string,
+            title: string,
+            subtitle?: string,
+            count: number,
+            latestDate?: string,
+            type: "CUSTOMER" | "GENERAL"
+        }>();
+
+        // 1. Initialize with items
+        items.forEach(item => {
+            if (item.salesPointId) {
+                if (!map.has(item.salesPointId)) {
+                    const point = salesPoints.find(p => p.id === item.salesPointId);
+                    map.set(item.salesPointId, {
+                        id: item.salesPointId,
+                        title: point?.FirmaAdi || "Bilinmeyen Cari",
+                        subtitle: point ? `${point.Sehir} / ${point.ilce}` : undefined,
+                        count: 0,
+                        type: "CUSTOMER"
+                    });
+                }
+                const folder = map.get(item.salesPointId)!;
+                folder.count++;
+                if (!folder.latestDate || item.date > folder.latestDate) {
+                    folder.latestDate = item.date;
+                }
+            } else {
+                // General Notes
+                if (!map.has("GENERAL")) {
+                    map.set("GENERAL", {
+                        id: "GENERAL",
+                        title: "Genel Notlar",
+                        count: 0,
+                        type: "GENERAL"
+                    });
+                }
+                const folder = map.get("GENERAL")!;
+                folder.count++;
+                if (!folder.latestDate || item.date > folder.latestDate) {
+                    folder.latestDate = item.date;
+                }
+            }
+        });
+
+        return Array.from(map.values()).sort((a, b) => {
+            // General always first, then by date desc
+            if (a.type === "GENERAL") return -1;
+            if (b.type === "GENERAL") return 1;
+            return (b.latestDate || "").localeCompare(a.latestDate || "");
+        });
+    }, [items, salesPoints]);
+
+    const activeFolderItems = useMemo(() => {
+        if (!activeFolderId) return [];
+        return items.filter(item => {
+            if (activeFolderId === "GENERAL") return !item.salesPointId;
+            return item.salesPointId === activeFolderId;
+        }).sort((a, b) => b.date.localeCompare(a.date));
+    }, [items, activeFolderId]);
+
+    const activeFolderInfo = useMemo(() => {
+        if (!activeFolderId) return null;
+        if (activeFolderId === "GENERAL") return { title: "Genel Notlar", subtitle: "Kategorisiz notlar ve görevler." };
+        const point = salesPoints.find(p => p.id === activeFolderId);
+        return {
+            title: point?.FirmaAdi || "Bilinmeyen Cari",
+            subtitle: point ? `${point.Sehir} / ${point.ilce} - ${point.Yetkili || ""}` : ""
+        };
+    }, [activeFolderId, salesPoints]);
+
+    // --- ACTIONS ---
+
+    async function handleCreateFolder() {
+        if (!newFolderPointId) return;
+
+        // Check if exists
+        const exists = folders.find(f => f.id === newFolderPointId);
+        if (exists) {
+            openFolder(newFolderPointId);
+            setShowNewFolderModal(false);
+            setNewFolderPointId("");
+            return;
+        }
+
+        // Create initial "Folder Created" note
+        setLoadingMessage("Klasör oluşturuluyor...");
+        try {
+            const point = salesPoints.find(p => p.id === newFolderPointId);
+            await saveAgendaItem({
+                type: "NOTE",
+                date: new Date().toISOString().split("T")[0],
+                content: `📁 ${point?.FirmaAdi} için klasör oluşturuldu.`,
+                status: "OPEN",
+                salesPointId: newFolderPointId,
+                createdBy: session.email,
+                createdAt: new Date().toISOString()
+            });
+            await fetchData(session.email);
+            openFolder(newFolderPointId);
+            setShowNewFolderModal(false);
+            setNewFolderPointId("");
+
+        } catch (e) {
+            setError("Klasör oluşturulurken hata oluştu.");
+        } finally {
+            setLoadingMessage(null);
+        }
+    }
+
+    async function handleSaveNote() {
         if (!formData.content) return;
         setSaving(true);
-        setLoadingMessage("Not kaydediliyor...");
         try {
             const payload = {
                 ...formData,
+                salesPointId: activeFolderId === "GENERAL" ? undefined : activeFolderId,
                 createdBy: session.email,
                 createdAt: new Date().toISOString()
             };
-            const res = await saveAgendaItem(payload);
-            if (res && res.ok) {
-                setShowNewForm(false);
-                setFormData({
-                    type: "NOTE",
-                    date: new Date().toISOString().split("T")[0],
-                    content: "",
-                    status: "OPEN",
-                });
-                fetchData(session.email);
-            }
+            await saveAgendaItem(payload as any);
+
+            // Reset form but keep date
+            setFormData({
+                type: "NOTE",
+                date: formData.date,
+                content: "",
+                status: "OPEN"
+            });
+
+            await fetchData(session.email);
         } catch (e) {
-            setError("Kaydedilirken bir hata oluştu.");
+            setError("Not kaydedilemedi.");
         } finally {
             setSaving(false);
-            setLoadingMessage(null);
+        }
+    }
+
+    async function handleDelete(id: string) {
+        if (!confirm("Silmek istediğinize emin misiniz?")) return;
+        try {
+            await deleteAgendaItem(id);
+            fetchData(session.email); // Don't await strictly to keep UI snappy, or await if needed
+        } catch (e) {
+            alert("Silinemedi.");
         }
     }
 
@@ -100,62 +231,12 @@ export default function AgendaPage() {
         }
     }
 
-    async function handleDelete(id: string) {
-        if (!confirm("Bu notu silmek istediğinize emin misiniz?")) return;
-        try {
-            await deleteAgendaItem(id);
-            fetchData(session.email);
-        } catch (e) {
-            setError("Silinirken hata oluştu.");
-        }
+    function openFolder(id: string) {
+        setActiveFolderId(id);
+        setViewMode("FOLDER");
+        // Reset form for new entry in this folder
+        setFormData(prev => ({ ...prev, content: "", status: "OPEN" }));
     }
-
-    const groupedDisplay = useMemo(() => {
-        const groups: Record<string, { title: string, subtitle?: string, items: AgendaItem[], isGeneral: boolean, icon: string }> = {};
-
-        items.forEach(item => {
-            if (item.salesPointId) {
-                const point = salesPoints.find(p => p.id === item.salesPointId);
-                const key = `CARI:${item.salesPointId}`;
-                if (!groups[key]) {
-                    groups[key] = {
-                        title: point?.FirmaAdi || "Bilinmeyen Cari",
-                        subtitle: point ? `📍 ${point.Sehir} / ${point.ilce}` : undefined,
-                        items: [],
-                        isGeneral: false,
-                        icon: "🏢"
-                    };
-                }
-                groups[key].items.push(item);
-            } else {
-                const cat = item.category || "Genel Notlar";
-                const key = `CAT:${cat}`;
-                if (!groups[key]) {
-                    groups[key] = {
-                        title: cat,
-                        items: [],
-                        isGeneral: true,
-                        icon: "📌"
-                    };
-                }
-                groups[key].items.push(item);
-            }
-        });
-
-        // Sort items within each group by date (newest first)
-        Object.keys(groups).forEach(key => {
-            groups[key].items.sort((a, b) => b.date.localeCompare(a.date));
-        });
-
-        return groups;
-    }, [items, salesPoints]);
-
-    // Extract unique categories for the dropdown
-    const existingCategories = useMemo(() => {
-        const cats = new Set<string>();
-        items.forEach(item => { if (item.category) cats.add(item.category); });
-        return Array.from(cats).sort();
-    }, [items]);
 
     function renderContentWithLinks(content: string) {
         const urlRegex = /(https?:\/\/[^\s]+)/g;
@@ -171,24 +252,73 @@ export default function AgendaPage() {
 
     return (
         <div className="page-container">
-            <div className="premium-card">
-                <div style={headerStyle}>
-                    <h1 className="title-lg outfit">📅 Ajandalarım</h1>
-                    <button
-                        onClick={() => setShowNewForm(!showNewForm)}
-                        className="tibcon-btn tibcon-btn-primary"
-                    >
-                        {showNewForm ? "Vazgeç" : "➕ Yeni Not/Klasör"}
-                    </button>
+            {/* --- HEADER --- */}
+            <div style={headerStyle}>
+                <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+                    {viewMode === "FOLDER" && (
+                        <button
+                            onClick={() => setViewMode("GRID")}
+                            className="tibcon-btn"
+                            style={{ background: "#f1f5f9", color: "#475569", padding: "0.5rem" }}
+                        >
+                            🔙 Geri
+                        </button>
+                    )}
+                    <h1 className="title-lg outfit">
+                        {viewMode === "GRID" ? "📅 Ajanda & Müşteri Notları" : (activeFolderInfo?.title || "Klasör")}
+                    </h1>
                 </div>
 
-                {error && <div className="error-banner">{error}</div>}
+                {viewMode === "GRID" && (
+                    <button
+                        onClick={() => setShowNewFolderModal(true)}
+                        className="tibcon-btn tibcon-btn-primary"
+                    >
+                        ➕ Yeni Klasör / Cari Ekle
+                    </button>
+                )}
+            </div>
 
-                {showNewForm && (
-                    <div style={formStyle} className="premium-card">
-                        <div className="form-grid">
+            {error && <div className="error-banner">{error}</div>}
+
+            {/* --- GRID VIEW --- */}
+            {viewMode === "GRID" && (
+                <div style={gridStyle}>
+                    {/* General Folder */}
+                    {!folders.find(f => f.type === "GENERAL") && (
+                        <div style={folderCardStyle} onClick={() => openFolder("GENERAL")}>
+                            <div style={folderIconStyle}>📂</div>
+                            <div style={folderTitleStyle}>Genel Notlar</div>
+                            <div style={folderSubtitleStyle}>Kişisel notlar ve görevler</div>
+                            <div style={folderCountStyle}>0 Öğe</div>
+                        </div>
+                    )}
+
+                    {folders.map(folder => (
+                        <div key={folder.id} style={folderCardStyle} onClick={() => openFolder(folder.id)}>
+                            <div style={folderIconStyle}>{folder.type === "GENERAL" ? "📂" : "🏢"}</div>
+                            <div style={folderTitleStyle}>{folder.title}</div>
+                            {folder.subtitle && <div style={folderSubtitleStyle}>{folder.subtitle}</div>}
+                            <div style={folderCountStyle}>{folder.count} Not/Görev</div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* --- FOLDER VIEW --- */}
+            {viewMode === "FOLDER" && activeFolderInfo && (
+                <div className="premium-card" style={{ animation: "fadeIn 0.3s ease" }}>
+                    {/* Header Info */}
+                    <div style={{ padding: "1.5rem", borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                        <h2 className="text-xl font-bold text-gray-800">{activeFolderInfo.title}</h2>
+                        {activeFolderInfo.subtitle && <p className="text-sm text-gray-500 mt-1">{activeFolderInfo.subtitle}</p>}
+                    </div>
+
+                    <div style={listLayout} className="folder-layout">
+                        {/* LEFT: New Note Form */}
+                        <div style={sidebarFormStyle}>
+                            <h3 style={{ fontSize: "1rem", fontWeight: 600, marginBottom: "1rem" }}>✍️ Yeni Not Ekle</h3>
                             <div style={formField}>
-                                <label style={labelStyle}>Tip</label>
                                 <select
                                     value={formData.type}
                                     onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
@@ -199,7 +329,6 @@ export default function AgendaPage() {
                                 </select>
                             </div>
                             <div style={formField}>
-                                <label style={labelStyle}>Tarih</label>
                                 <input
                                     type="date"
                                     value={formData.date}
@@ -207,289 +336,204 @@ export default function AgendaPage() {
                                     style={inputStyle}
                                 />
                             </div>
+                            <div style={formField}>
+                                <textarea
+                                    value={formData.content}
+                                    onChange={(e) => setFormData({ ...formData, content: e.target.value })}
+                                    style={{ ...inputStyle, height: "120px", resize: "vertical" }}
+                                    placeholder="Notunuzu buraya yazın..."
+                                />
+                            </div>
+                            <button
+                                onClick={handleSaveNote}
+                                disabled={saving || !formData.content}
+                                className="tibcon-btn tibcon-btn-primary"
+                                style={{ width: "100%" }}
+                            >
+                                {saving ? "Kaydediliyor..." : "Kaydet"}
+                            </button>
                         </div>
 
+                        {/* RIGHT: List */}
+                        <div style={listAreaStyle}>
+                            {activeFolderItems.length === 0 ? (
+                                <div style={{ padding: "2rem", textAlign: "center", color: "#94a3b8" }}>
+                                    Bu klasörde henüz not yok.
+                                </div>
+                            ) : (
+                                activeFolderItems.map(item => (
+                                    <div key={item.id} style={noteItemStyle(item.type === "TASK", item.status === "DONE")}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+                                            <span style={dateBadgeStyle}>{new Date(item.date).toLocaleDateString("tr-TR")}</span>
+                                            <div style={{ display: "flex", gap: "0.5rem" }}>
+                                                {item.type === "TASK" && (
+                                                    <button
+                                                        onClick={() => toggleStatus(item)}
+                                                        style={{ ...actionBtnStyle, color: item.status === "DONE" ? "#22c55e" : "#eab308" }}
+                                                        title={item.status === "DONE" ? "Tamamlandı" : "Bekliyor"}
+                                                    >
+                                                        {item.status === "DONE" ? "✔️ Tamamlandı" : "⏳ Bekliyor"}
+                                                    </button>
+                                                )}
+                                                <button onClick={() => handleDelete(item.id)} style={{ ...actionBtnStyle, color: "#ef4444" }}>🗑️</button>
+                                            </div>
+                                        </div>
+                                        <div style={{
+                                            whiteSpace: "pre-wrap",
+                                            lineHeight: "1.5",
+                                            textDecoration: item.status === "DONE" ? "line-through" : "none",
+                                            color: item.status === "DONE" ? "#94a3b8" : "#334155"
+                                        }}>
+                                            {renderContentWithLinks(item.content)}
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
 
+            {/* --- NEW FOLDER MODAL --- */}
+            {showNewFolderModal && (
+                <div style={modalOverlayStyle}>
+                    <div style={modalContentStyle}>
+                        <h3 className="text-lg font-bold mb-4">Yeni Cari Klasörü Oluştur</h3>
+                        <p className="text-sm text-gray-500 mb-4">Listeden bir cari seçin. Seçtiğiniz cari için bir klasör oluşturulacak.</p>
 
-                        <div style={formField}>
-                            <label style={labelStyle}>Bağlantılı Müşteri (Opsiyonel)</label>
-                            <select
-                                value={formData.salesPointId}
-                                onChange={(e) => setFormData({ ...formData, salesPointId: e.target.value })}
-                                style={inputStyle}
-                            >
-                                <option value="">Bir müşteri seçin...</option>
-                                {salesPoints.map(p => (
+                        <select
+                            value={newFolderPointId}
+                            onChange={e => setNewFolderPointId(e.target.value)}
+                            style={inputStyle}
+                            className="mb-4"
+                        >
+                            <option value="">Seçiniz...</option>
+                            {salesPoints
+                                .filter(p => !folders.find(f => f.id === p.id)) // Hide already created
+                                .sort((a, b) => a.FirmaAdi.localeCompare(b.FirmaAdi))
+                                .map(p => (
                                     <option key={p.id} value={p.id}>{p.FirmaAdi}</option>
                                 ))}
-                            </select>
-                        </div>
+                        </select>
 
-                        {!formData.salesPointId && (
-                            <div style={formField}>
-                                <label style={labelStyle}>Klasör / Kategori (örn: Fiyat Listesi, Dosyalar)</label>
-                                <div style={{ display: "flex", gap: "8px" }}>
-                                    <input
-                                        list="categories"
-                                        placeholder="Yeni veya mevcut kategori..."
-                                        value={formData.category || ""}
-                                        onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                                        style={inputStyle}
-                                    />
-                                    <datalist id="categories">
-                                        {existingCategories.map(c => <option key={c} value={c} />)}
-                                        <option value="Fiyat Listesi" />
-                                        <option value="Excel Dosyaları" />
-                                        <option value="Web Bağlantıları" />
-                                    </datalist>
-                                </div>
-                            </div>
-                        )}
-
-                        <div style={formField}>
-                            <label style={labelStyle}>İçerik (Link veya Not)</label>
-                            <textarea
-                                value={formData.content}
-                                onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-                                style={{ ...inputStyle, height: "100px", resize: "vertical" }}
-                                placeholder="Notun içeriği veya URL adresi..."
-                            />
+                        <div style={{ display: "flex", gap: "1rem", justifyContent: "flex-end" }}>
+                            <button
+                                onClick={() => setShowNewFolderModal(false)}
+                                className="tibcon-btn"
+                                style={{ background: "#f1f5f9", color: "#334155" }}
+                            >
+                                İptal
+                            </button>
+                            <button
+                                onClick={handleCreateFolder}
+                                disabled={!newFolderPointId}
+                                className="tibcon-btn tibcon-btn-primary"
+                            >
+                                Oluştur
+                            </button>
                         </div>
-                        <button
-                            onClick={handleSave}
-                            disabled={saving}
-                            className="tibcon-btn tibcon-btn-primary"
-                            style={{ width: "100%" }}
-                        >
-                            {saving ? "Kaydediliyor..." : "Kaydet"}
-                        </button>
                     </div>
-                )}
-
-                <div style={{ marginTop: "2rem" }}>
-                    {Object.keys(groupedDisplay).length === 0 ? (
-                        <div style={{ textAlign: "center", padding: "3rem", color: "#666" }}>
-                            Henüz bir not veya kategoriniz bulunmuyor.
-                        </div>
-                    ) : (
-                        <div style={cardsContainer}>
-                            {Object.entries(groupedDisplay).map(([key, group]) => (
-                                <div key={key} style={cariCardStyle} className="premium-card">
-                                    <div style={cariCardHeader}>
-                                        <div style={{ display: "flex", flexDirection: "column" }}>
-                                            <h3 className="outfit" style={{ margin: 0, fontSize: "1.1rem" }}>
-                                                {group.icon} {group.title}
-                                            </h3>
-                                            {group.subtitle && (
-                                                <span style={{ fontSize: "0.75rem", color: "#666" }}>
-                                                    {group.subtitle}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div style={noteCountBadge}>
-                                            {group.items.length} Öğe
-                                        </div>
-                                    </div>
-
-                                    <div style={notesListStyle}>
-                                        {group.items.map(item => (
-                                            <div key={item.id} style={noteItemStyle(item.status === "DONE")}>
-                                                <div style={noteMetaStyle}>
-                                                    <span style={{ fontSize: "0.7rem", color: "#666" }}>
-                                                        {new Date(item.date).toLocaleDateString("tr-TR")}
-                                                    </span>
-                                                    <span style={typeBadgeStyle(item.type)}>
-                                                        {item.type === "NOTE" ? "Not" : "Görev"}
-                                                    </span>
-                                                </div>
-
-                                                <div style={noteContentWrapper}>
-                                                    <div style={{
-                                                        fontSize: "0.9rem",
-                                                        whiteSpace: "pre-wrap",
-                                                        textDecoration: item.status === "DONE" ? "line-through" : "none",
-                                                        color: item.status === "DONE" ? "#999" : "#333",
-                                                        flex: 1,
-                                                        wordBreak: "break-all"
-                                                    }}>
-                                                        {renderContentWithLinks(item.content)}
-                                                    </div>
-                                                    <div style={{ display: "flex", gap: "8px", alignItems: "start" }}>
-                                                        {item.type === "TASK" && (
-                                                            <button
-                                                                onClick={() => toggleStatus(item)}
-                                                                style={actionButtonStyle}
-                                                                title={item.status === "DONE" ? "Aç" : "Tamamla"}
-                                                            >
-                                                                {item.status === "DONE" ? "↩️" : "✔️"}
-                                                            </button>
-                                                        )}
-                                                        <button
-                                                            onClick={() => handleDelete(item.id)}
-                                                            style={{ ...actionButtonStyle, color: "var(--tibcon-red)" }}
-                                                            title="Sil"
-                                                        >
-                                                            🗑️
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
                 </div>
-            </div>
+            )}
 
             <style jsx>{`
                 .error-banner {
-                    background: #fee2e2;
-                    color: #dc2626;
-                    padding: 1rem;
-                    border-radius: 8px;
-                    margin-bottom: 1rem;
-                    border: 1px solid #fecaca;
+                    background: #fee2e2; color: #dc2626; padding: 1rem;
+                    border-radius: 8px; margin-bottom: 1rem; border: 1px solid #fecaca;
                 }
-                .form-grid {
+                .folder-layout {
                     display: grid;
-                    grid-template-columns: 1fr 1fr;
-                    gap: 1rem;
+                    grid-template-columns: 350px 1fr;
+                    min-height: 500px;
                 }
                 @media (max-width: 768px) {
-                    .form-grid {
-                        grid-template-columns: 1fr;
-                    }
+                    .folder-layout { grid-template-columns: 1fr; }
+                }
+                @keyframes fadeIn {
+                    from { opacity: 0; transform: translateY(10px); }
+                    to { opacity: 1; transform: translateY(0); }
                 }
             `}</style>
+
             {loadingMessage && <LoadingOverlay message={loadingMessage} />}
         </div>
     );
 }
 
+// --- STYLES ---
+
 const headerStyle: React.CSSProperties = {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: "2rem",
-    flexWrap: "wrap",
-    gap: "1rem"
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    marginBottom: "2rem", flexWrap: "wrap", gap: "1rem"
 };
 
-const formStyle: React.CSSProperties = {
-    padding: "1.5rem",
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
-    marginBottom: "2rem"
+const gridStyle: React.CSSProperties = {
+    display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: "1.5rem"
 };
 
-const formField: React.CSSProperties = {
-    marginBottom: "1rem"
+const folderCardStyle: React.CSSProperties = {
+    background: "white", padding: "1.5rem", borderRadius: "16px",
+    border: "1px solid #e2e8f0", cursor: "pointer",
+    transition: "all 0.2s ease",
+    display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center",
+    boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.05)"
 };
 
-const labelStyle: React.CSSProperties = {
-    display: "block",
-    fontSize: "0.85rem",
-    fontWeight: 600,
-    marginBottom: "0.4rem",
-    color: "#475569"
+const folderIconStyle: React.CSSProperties = { fontSize: "3rem", marginBottom: "0.5rem" };
+const folderTitleStyle: React.CSSProperties = { fontWeight: 700, fontSize: "1.1rem", color: "#1e293b", marginBottom: "0.25rem" };
+const folderSubtitleStyle: React.CSSProperties = { fontSize: "0.85rem", color: "#64748b", marginBottom: "0.5rem" };
+const folderCountStyle: React.CSSProperties = {
+    fontSize: "0.75rem", background: "#f1f5f9", padding: "4px 8px",
+    borderRadius: "99px", color: "#475569", fontWeight: 600
 };
 
+// Detail View Styles
+const listLayout: React.CSSProperties = {
+    display: "flex", flexDirection: "column" // Overwritten by CSS class .folder-layout grid for desktop
+};
+
+const sidebarFormStyle: React.CSSProperties = {
+    padding: "1.5rem", borderRight: "1px solid #e2e8f0", background: "#fff"
+};
+
+const listAreaStyle: React.CSSProperties = {
+    padding: "1.5rem", background: "#f8fafc"
+};
+
+const formField: React.CSSProperties = { marginBottom: "1rem" };
 const inputStyle: React.CSSProperties = {
-    width: "100%",
-    padding: "0.75rem",
-    borderRadius: "8px",
-    border: "1px solid #cbd5e1",
-    fontSize: "0.9rem",
-    outline: "none"
+    width: "100%", padding: "0.75rem", borderRadius: "8px",
+    border: "1px solid #cbd5e1", fontSize: "0.9rem", outline: "none"
 };
 
-// --- NEW CARD STYLES ---
-const cardsContainer: React.CSSProperties = {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(350px, 1fr))",
-    gap: "1.5rem",
-    alignItems: "start"
-};
-
-const cariCardStyle: React.CSSProperties = {
-    padding: "0",
-    overflow: "hidden",
-    display: "flex",
-    flexDirection: "column",
-    border: "1px solid #e2e8f0",
-    borderRadius: "16px",
-    boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)"
-};
-
-const cariCardHeader: React.CSSProperties = {
-    padding: "1.25rem",
-    background: "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)",
-    borderBottom: "1px solid #e2e8f0",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center"
-};
-
-const noteCountBadge: React.CSSProperties = {
-    background: "var(--tibcon-red)",
-    color: "white",
-    fontSize: "0.75rem",
-    padding: "4px 10px",
-    borderRadius: "99px",
-    fontWeight: 700
-};
-
-const notesListStyle: React.CSSProperties = {
-    maxHeight: "400px",
-    overflowY: "auto",
-    padding: "1rem"
-};
-
-const noteMetaStyle: React.CSSProperties = {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: "0.5rem"
-};
-
-const noteContentWrapper: React.CSSProperties = {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "10px"
-};
-
-function noteItemStyle(isDone: boolean): React.CSSProperties {
-    return {
-        padding: "1rem",
-        borderBottom: "1px solid #f1f5f9",
-        background: isDone ? "#f8fafc" : "transparent",
-        transition: "background 0.2s"
-    };
-}
-
-function typeBadgeStyle(type: string): React.CSSProperties {
-    return {
-        fontSize: "0.65rem",
-        fontWeight: 800,
-        textTransform: "uppercase",
-        padding: "2px 6px",
-        borderRadius: "4px",
-        background: type === "NOTE" ? "#dcfce7" : "#dbeafe",
-        color: type === "NOTE" ? "#166534" : "#1e40af"
-    };
-}
-
-const actionButtonStyle: React.CSSProperties = {
-    background: "white",
-    border: "1px solid #e2e8f0",
-    fontSize: "0.85rem",
-    cursor: "pointer",
-    padding: "4px",
-    borderRadius: "6px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+const noteItemStyle = (isTask: boolean, isDone: boolean): React.CSSProperties => ({
+    background: isDone ? "#f1f5f9" : "white",
+    padding: "1rem", borderRadius: "12px",
+    marginBottom: "1rem",
+    border: "1px solid",
+    borderColor: isDone ? "#e2e8f0" : (isTask ? "#bfdbfe" : "#e2e8f0"),
+    boxShadow: isDone ? "none" : "0 2px 4px rgba(0,0,0,0.05)",
     transition: "all 0.2s"
+});
+
+const dateBadgeStyle: React.CSSProperties = {
+    fontSize: "0.75rem", color: "#64748b", background: "#f1f5f9",
+    padding: "2px 6px", borderRadius: "4px"
+};
+
+const actionBtnStyle: React.CSSProperties = {
+    background: "none", border: "none", cursor: "pointer",
+    fontSize: "0.85rem", display: "flex", alignItems: "center", gap: "4px",
+    fontWeight: 600
+};
+
+const modalOverlayStyle: React.CSSProperties = {
+    position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+    background: "rgba(0,0,0,0.5)", zIndex: 1000,
+    display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem"
+};
+
+const modalContentStyle: React.CSSProperties = {
+    background: "white", padding: "2rem", borderRadius: "16px",
+    width: "100%", maxWidth: "500px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1)"
 };

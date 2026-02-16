@@ -241,50 +241,6 @@ h4,
     text-transform: uppercase;
     margin-right: 1rem;
   }
-
-  /* Mobile Grid Override */
-  .mobile-grid-3 {
-    display: grid !important;
-    grid-template-columns: repeat(3, 1fr) !important;
-    gap: 0.5rem !important;
-  }
-
-  /* Mobile Text Hiding */
-  .hide-text-mobile {
-    display: none !important;
-  }
-
-  /* Mobile Navbar Adjustments */
-  .nav-btn-mobile {
-    padding: 0.5rem !important;
-    justify-content: center !important;
-  }
-
-  .nav-btn-mobile .icon {
-    font-size: 1.2rem !important;
-    margin: 0 !important;
-  }
-
-  .mobile-card {
-    padding: 0.75rem !important;
-    min-height: 100px !important;
-  }
-
-  .mobile-tiny-text {
-    font-size: 0.75rem !important;
-    margin: 0.5rem 0 !important;
-    line-height: 1.1 !important;
-  }
-
-  .mobile-icon {
-    width: 40px !important;
-    height: 40px !important;
-    margin-bottom: 0.25rem !important;
-  }
-
-  .mobile-icon span {
-    font-size: 1.5rem !important;
-  }
 }
 
 

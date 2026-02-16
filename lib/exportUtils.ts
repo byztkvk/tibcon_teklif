@@ -56,7 +56,7 @@ export async function exportToPDF(quote: any, ownerDetails: any) {
     const logoY = 5;
     const logoWidth = 90;
     try {
-        const logoUrl = "/logo.png";
+        const logoUrl = "/tibcon-logo-orjinal.png";
         // Width increased to 90, Y=5
         doc.addImage(logoUrl, "PNG", 15, logoY, logoWidth, 0);
     } catch (e) {

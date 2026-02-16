@@ -124,6 +124,8 @@ export type AgendaItem = {
   createdBy: string;
   createdAt: string;
   category?: string;
+  lat?: number;
+  lng?: number;
 };
 
 // API Functions

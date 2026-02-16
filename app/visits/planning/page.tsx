@@ -34,6 +34,15 @@ export default function VisitPlanningPage() {
     // Calendar State
     const [currentDate, setCurrentDate] = useState(new Date());
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
+    const [isMobile, setIsMobile] = useState(false);
+    const [dayDetails, setDayDetails] = useState<{ date: string, plans: VisitPlan[] } | null>(null);
+
+    useEffect(() => {
+        const check = () => setIsMobile(window.innerWidth < 768);
+        check();
+        window.addEventListener('resize', check);
+        return () => window.removeEventListener('resize', check);
+    }, []);
 
     // Modal State
     const [showModal, setShowModal] = useState(false);
@@ -243,53 +252,83 @@ export default function VisitPlanningPage() {
         const startDay = firstDayOfMonth(year, month);
 
         const grid = [];
-        // Empty slots
+
+        // Add weekday headers first (7 cells)
+        ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"].forEach(day => {
+            grid.push(
+                <div key={`header-${day}`} className="calendar-weekday-header">
+                    {day}
+                </div>
+            );
+        });
+
+        // Add empty cells before month starts
         for (let i = 0; i < startDay; i++) {
-            grid.push(<div key={`empty-${i}`} style={{ background: "#f8f9fa" }}></div>);
+            grid.push(<div key={`empty-${i}`} className="calendar-cell calendar-cell-empty"></div>);
         }
 
-        // Days
+        // Add day cells
         for (let d = 1; d <= totalDays; d++) {
             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
             const isToday = new Date().toISOString().slice(0, 10) === dateStr;
             const dayPlans = plans.filter(p => p.plannedDate === dateStr && p.status !== "CANCELLED");
 
+            // Limit shown items on mobile
+            const displayPlans = isMobile ? dayPlans.slice(0, 1) : dayPlans.slice(0, 3);
+            const hiddenCount = dayPlans.length - displayPlans.length;
+
             grid.push(
                 <div
-                    key={d}
+                    key={`day-${d}`}
                     onClick={() => {
-                        setFormDate(dateStr);
-                        setShowModal(true);
+                        if (isMobile) {
+                            setDayDetails({ date: dateStr, plans: dayPlans });
+                        } else {
+                            setFormDate(dateStr);
+                            setShowModal(true);
+                        }
                     }}
-                    className="calendar-cell"
-                    onMouseEnter={e => e.currentTarget.style.background = "#fafafa"}
-                    onMouseLeave={e => e.currentTarget.style.background = "white"}
+                    className={`calendar-cell ${isToday ? 'calendar-cell-today' : ''}`}
                 >
-                    <div className="calendar-date-header">
-                        <span>{d}</span>
-                        {isToday && <span className="today-badge">BUGÜN</span>}
+                    <div className="calendar-cell-header">
+                        <span className="calendar-day-number">{d}</span>
+                        {isToday && <span className="today-indicator">●</span>}
                     </div>
 
-                    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                        {dayPlans.map(p => {
+                    <div className="calendar-cell-content">
+                        {displayPlans.map(p => {
                             const isAssigned = p.creatorId && p.assignedTo && p.creatorId !== p.assignedTo;
                             return (
                                 <div
                                     key={p.id}
                                     onClick={(e) => {
                                         e.stopPropagation();
-                                        completePlan(p);
+                                        if (isMobile) {
+                                            setDayDetails({ date: dateStr, plans: dayPlans });
+                                        } else {
+                                            completePlan(p);
+                                        }
                                     }}
-                                    className={`plan-pill ${p.status === "COMPLETED" ? "completed" : isAssigned ? "assigned" : "pending"}`}
+                                    className={`plan-indicator ${p.status === "COMPLETED" ? "completed" : isAssigned ? "assigned" : "pending"}`}
+                                    title={p.firmaAdi}
                                 >
-                                    {isAssigned && <span style={{ fontSize: "0.6rem", background: "#3b82f6", color: "white", padding: "0 2px", borderRadius: "2px", marginRight: "2px" }}>A</span>}
-                                    {p.status === "COMPLETED" && "✅"} {p.firmaAdi}
+                                    {!isMobile && (
+                                        <>
+                                            {isAssigned && <span className="assigned-badge">A</span>}
+                                            {p.status === "COMPLETED" && "✅"} {p.firmaAdi}
+                                        </>
+                                    )}
                                 </div>
                             );
                         })}
+                        {hiddenCount > 0 && (
+                            <div className="more-events">
+                                +{hiddenCount}
+                            </div>
+                        )}
                     </div>
 
-                    <div className="add-btn-overlay">+</div>
+                    {!isMobile && dayPlans.length === 0 && <div className="add-btn-overlay">+</div>}
                 </div>
             );
         }
@@ -298,32 +337,39 @@ export default function VisitPlanningPage() {
 
     return (
         <div className="page-container">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "2rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "2rem", flexWrap: "wrap", gap: "1rem" }}>
                 <div>
-                    <button onClick={() => router.back()} className="tibcon-btn tibcon-btn-outline" style={{ marginBottom: "1rem" }}>
+                    <button onClick={() => router.back()} className="tibcon-btn tibcon-btn-outline" style={{ marginBottom: "0.5rem", fontSize: "0.8rem", padding: "4px 8px" }}>
                         ← Geri Dön
                     </button>
                     <h1 className="title-xl outfit">Ziyaret <span style={{ color: "var(--tibcon-red)" }}>Planlama</span></h1>
                     <p className="text-muted">Müşteri ziyaretlerinizi aylık olarak planlayın ve takip edin.</p>
                 </div>
-                <div style={{ display: "flex", gap: "1rem" }}>
-                    <button title="Önceki Ay" onClick={() => setCurrentDate(new Date(year, month - 1, 1))} className="tibcon-btn tibcon-btn-outline">◀</button>
-                    <h2 className="outfit" style={{ margin: 0, width: "200px", textAlign: "center" }}>{monthName} {year}</h2>
-                    <button title="Sonraki Ay" onClick={() => setCurrentDate(new Date(year, month + 1, 1))} className="tibcon-btn tibcon-btn-outline">▶</button>
+
+                {/* Month Navigation - Centered and touch-friendly */}
+                <div className="month-navigation">
+                    <button
+                        title="Önceki Ay"
+                        onClick={() => setCurrentDate(new Date(year, month - 1, 1))}
+                        className="tibcon-btn tibcon-btn-outline month-nav-btn"
+                    >
+                        ◀
+                    </button>
+                    <h2 className="outfit month-title">{monthName} {year}</h2>
+                    <button
+                        title="Sonraki Ay"
+                        onClick={() => setCurrentDate(new Date(year, month + 1, 1))}
+                        className="tibcon-btn tibcon-btn-outline month-nav-btn"
+                    >
+                        ▶
+                    </button>
                 </div>
             </div>
 
             <div className="planning-grid">
                 {/* CALENDAR */}
-                <div className="premium-card" style={{ padding: 0, overflow: "hidden" }}>
-                    <div className="calendar-header-row">
-                        {["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"].map(d => (
-                            <div key={d} className="calendar-day-name">
-                                {d}
-                            </div>
-                        ))}
-                    </div>
-                    <div className="calendar-body-grid">
+                <div className="calendar-wrapper">
+                    <div className="calendar-grid-unified">
                         {renderCalendar()}
                     </div>
                 </div>
@@ -580,7 +626,109 @@ export default function VisitPlanningPage() {
                 </div>
             )}
 
+            {/* Day Details Modal (Mobile) */}
+            {dayDetails && (
+                <div className="modal-overlay" onClick={() => setDayDetails(null)} style={{ alignItems: "flex-end" }}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()} style={{
+                        borderBottomLeftRadius: 0, borderBottomRightRadius: 0, width: "100%", maxWidth: "100%",
+                        maxHeight: "80vh", animation: "slideUp 0.3s ease-out"
+                    }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", borderBottom: "1px solid #eee", paddingBottom: "10px" }}>
+                            <h3 className="outfit" style={{ margin: 0 }}>
+                                {new Date(dayDetails.date).toLocaleDateString("tr-TR", { day: 'numeric', month: 'long', weekday: 'long' })}
+                            </h3>
+                            <button onClick={() => setDayDetails(null)} style={{ border: "none", background: "none", fontSize: "1.5rem", padding: "0 8px" }}>&times;</button>
+                        </div>
+
+                        <div style={{ marginBottom: "1.5rem", display: "flex", flexDirection: "column", gap: "10px" }}>
+                            {dayDetails.plans.length === 0 ? (
+                                <div style={{ color: "#999", textAlign: "center", padding: "1rem" }}>Bu tarihte plan bulunmuyor.</div>
+                            ) : (
+                                dayDetails.plans.map(p => (
+                                    <div key={p.id} className="plan-item" style={{ background: "#f8f9fa", border: "1px solid #eee" }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                                            <div>
+                                                <div style={{ fontWeight: 700, color: "var(--tibcon-anth)" }}>{p.firmaAdi}</div>
+                                                <div style={{ fontSize: "0.85rem", color: "#666" }}>{p.sehir} / {p.ilce}</div>
+                                                {p.notes && <div style={{ fontSize: "0.8rem", color: "#999", fontStyle: "italic" }}>"{p.notes}"</div>}
+                                            </div>
+                                            {p.status === "COMPLETED" ? (
+                                                <span style={{ color: "green", fontSize: "1.2rem" }}>✅</span>
+                                            ) : (
+                                                <button
+                                                    onClick={() => { setDayDetails(null); completePlan(p); }}
+                                                    style={{ background: "var(--tibcon-red)", color: "white", border: "none", borderRadius: "6px", padding: "4px 8px", fontSize: "0.8rem" }}
+                                                >
+                                                    Giriş
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+
+                        <button
+                            onClick={() => {
+                                setFormDate(dayDetails.date);
+                                setDayDetails(null);
+                                setShowModal(true);
+                            }}
+                            className="tibcon-btn tibcon-btn-primary"
+                            style={{ width: "100%", padding: "12px", fontSize: "1rem", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}
+                        >
+                            <span style={{ fontSize: "1.2rem", fontWeight: 700 }}>+</span> Yeni Ziyaret Planla
+                        </button>
+                    </div>
+                </div>
+            )}
+
             <style jsx>{`
+                @keyframes slideUp {
+                    from { transform: translateY(100%); opacity: 0; }
+                    to { transform: translateY(0); opacity: 1; }
+                }
+
+                /* MONTH NAVIGATION */
+                .month-navigation {
+                    display: flex;
+                    align-items: center;
+                    gap: 1rem;
+                }
+
+                .month-title {
+                    margin: 0;
+                    min-width: 200px;
+                    text-align: center;
+                    font-size: 1.5rem;
+                }
+
+                .month-nav-btn {
+                    min-width: 44px;
+                    min-height: 44px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 1.2rem;
+                }
+
+                @media (max-width: 768px) {
+                    .month-navigation {
+                        width: 100%;
+                        justify-content: center;
+                    }
+
+                    .month-title {
+                        font-size: 1.2rem;
+                        min-width: 150px;
+                    }
+
+                    .month-nav-btn {
+                        min-width: 48px;
+                        min-height: 48px;
+                    }
+                }
+
                 .premium-input {
                     width: 100%;
                     padding: 0.75rem 1rem;
@@ -615,32 +763,267 @@ export default function VisitPlanningPage() {
                 /* GRID LAYOUTS */
                 .planning-grid {
                     display: grid;
-                    gridTemplateColumns: 3fr 1fr;
+                    grid-template-columns: 3fr 1fr;
                     gap: 2rem;
-                    alignItems: start;
+                    align-items: start;
                 }
-                
-                .calendar-header-row {
+
+                /* CALENDAR WRAPPER */
+                .calendar-wrapper {
+                    width: 100%;
+                    max-width: 100vw;
+                    overflow-x: hidden;
+                    background: white;
+                    border-radius: 20px;
+                    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+                }
+
+                /* UNIFIED CALENDAR GRID - Single grid for headers and days */
+                .calendar-grid-unified {
                     display: grid;
-                    grid-template-columns: repeat(7, 1fr);
-                    background: #eee;
+                    grid-template-columns: repeat(7, minmax(0, 1fr));
+                    grid-auto-rows: minmax(64px, auto);
                     gap: 1px;
-                    border-bottom: 1px solid #eee;
+                    background: #e5e7eb;
+                    width: 100%;
                 }
-                .calendar-day-name {
-                    padding: 12px;
+
+                /* WEEKDAY HEADERS - First row in the grid */
+                .calendar-weekday-header {
+                    background: #f8f9fa;
+                    padding: 12px 8px;
                     text-align: center;
                     font-weight: 700;
+                    font-size: 0.85rem;
+                    color: #6b7280;
+                    border-bottom: 2px solid #e5e7eb;
+                }
+
+                /* CALENDAR CELLS - Each day is one grid cell */
+                .calendar-cell {
+                    background: white;
+                    padding: 6px;
+                    min-width: 0;
+                    position: relative;
+                    cursor: pointer;
+                    transition: all 0.2s ease;
+                    display: flex;
+                    flex-direction: column;
+                    overflow: hidden;
+                }
+
+                .calendar-cell:hover {
+                    background: #f9fafb;
+                    box-shadow: inset 0 0 0 2px rgba(227, 6, 19, 0.1);
+                }
+
+                .calendar-cell-empty {
+                    background: #f9fafb;
+                    cursor: default;
+                }
+
+                .calendar-cell-empty:hover {
+                    background: #f9fafb;
+                    box-shadow: none;
+                }
+
+                .calendar-cell-today {
+                    background: rgba(227, 6, 19, 0.02);
+                }
+
+                /* DAY CELL HEADER - Top section with day number and today indicator */
+                .calendar-cell-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 4px;
+                }
+
+                .calendar-day-number {
+                    font-weight: 700;
+                    font-size: 0.9rem;
+                    color: #374151;
+                }
+
+                .calendar-cell-today .calendar-day-number {
+                    color: var(--tibcon-red);
+                }
+
+                .today-indicator {
+                    color: var(--tibcon-red);
+                    font-size: 0.7rem;
+                    line-height: 1;
+                }
+
+                /* DAY CELL CONTENT - Events area */
+                .calendar-cell-content {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+                    flex: 1;
+                    overflow: hidden;
+                }
+
+                /* PLAN/EVENT INDICATORS */
+                .plan-indicator {
+                    font-size: 0.7rem;
+                    padding: 2px 4px;
+                    border-radius: 3px;
+                    cursor: pointer;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                    border-left-width: 2px;
+                    border-left-style: solid;
+                    transition: all 0.15s ease;
+                }
+
+                .plan-indicator:hover {
+                    transform: translateX(2px);
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+                }
+
+                .plan-indicator.completed {
+                    background: #d1fae5;
+                    color: #065f46;
+                    border-left-color: #10b981;
+                }
+
+                .plan-indicator.assigned {
+                    background: rgba(37, 99, 235, 0.1);
+                    color: #1e40af;
+                    border-left-color: #3b82f6;
+                }
+
+                .plan-indicator.pending {
+                    background: rgba(227, 6, 19, 0.1);
+                    color: var(--tibcon-red);
+                    border-left-color: var(--tibcon-red);
+                }
+
+                .assigned-badge {
+                    font-size: 0.55rem;
+                    background: #3b82f6;
+                    color: white;
+                    padding: 1px 3px;
+                    border-radius: 2px;
+                    margin-right: 2px;
+                    font-weight: 700;
+                }
+
+                .more-events {
+                    font-size: 0.65rem;
+                    color: #6b7280;
+                    font-weight: 600;
+                    padding: 2px 4px;
+                }
+
+                /* MOBILE RESPONSIVE */
+                @media (max-width: 768px) {
+                    .planning-grid {
+                        grid-template-columns: 1fr;
+                        gap: 1rem;
+                    }
+
+                    .calendar-grid-unified {
+                        grid-auto-rows: minmax(56px, auto);
+                        gap: 0.5px;
+                    }
+
+                    .calendar-weekday-header {
+                        padding: 8px 4px;
+                        font-size: 0.65rem;
+                    }
+
+                    .calendar-cell {
+                        padding: 4px;
+                        aspect-ratio: 1 / 1;
+                        min-height: 56px;
+                    }
+
+                    .calendar-day-number {
+                        font-size: 0.75rem;
+                    }
+
+                    .today-indicator {
+                        font-size: 0.6rem;
+                    }
+
+                    /* On mobile, show colored dots instead of text */
+                    .plan-indicator {
+                        width: 6px;
+                        height: 6px;
+                        border-radius: 50%;
+                        padding: 0;
+                        border: none;
+                        flex-shrink: 0;
+                    }
+
+                    .plan-indicator.completed {
+                        background: #10b981;
+                    }
+
+                    .plan-indicator.assigned {
+                        background: #3b82f6;
+                    }
+
+                    .plan-indicator.pending {
+                        background: var(--tibcon-red);
+                    }
+
+                    .calendar-cell-content {
+                        flex-direction: row;
+                        flex-wrap: wrap;
+                        gap: 3px;
+                        align-items: center;
+                    }
+
+                    .more-events {
+                        font-size: 0.55rem;
+                        padding: 0;
+                    }
+                }
+
+                /* OLD CALENDAR STYLES - REMOVED */
+                .calendar-date-header {
+                    font-weight: 700;
+                    margin-bottom: 4px;
+                    display: flex;
+                    justify-content: space-between;
+                    color: #495057;
+                }
+                .today-badge {
+                    font-size: 0.6rem;
+                    background: var(--tibcon-red);
+                    color: white;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                }
+                .today-dot {
+                    color: var(--tibcon-red);
                     font-size: 0.8rem;
-                    color: #666;
-                    background: #f8f9fa;
+                    line-height: 1;
                 }
                 
-                .calendar-body-grid {
-                    display: grid;
-                    grid-template-columns: repeat(7, 1fr);
-                    background: #eee;
-                    gap: 1px;
+                .plan-pill {
+                    font-size: 0.7rem;
+                    padding: 2px 4px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                    border-left-width: 2px;
+                    border-left-style: solid;
+                }
+                .plan-pill.completed {
+                    background: #d1fae5; color: #065f46; border-left-color: #10b981;
+                }
+                .plan-pill.assigned {
+                    background: rgba(37, 99, 235, 0.1); color: #1e40af; border-left-color: #3b82f6;
+                }
+                .plan-pill.pending {
+                    background: rgba(227, 6, 19, 0.1); color: var(--tibcon-red); border-left-color: var(--tibcon-red);
                 }
 
                 .sidebar-list {
@@ -683,92 +1066,30 @@ export default function VisitPlanningPage() {
                     overflow-y: auto;
                 }
 
-                /* CALENDAR GRID ITEMS */
-                .calendar-cell {
-                    min-height: 120px;
-                    background: white;
-                    border: 1px solid #eee;
-                    padding: 8px;
-                    position: relative;
-                    cursor: pointer;
-                    transition: background 0.2s;
-                }
-                .calendar-date-header {
-                    font-weight: 700;
-                    margin-bottom: 4px;
-                    display: flex;
-                    justify-content: space-between;
-                    color: #495057;
-                }
-                .today-badge {
-                    font-size: 0.6rem;
-                    background: var(--tibcon-red);
-                    color: white;
-                    padding: 2px 6px;
-                    border-radius: 4px;
-                }
-                
-                .plan-pill {
-                    font-size: 0.7rem;
-                    padding: 2px 4px;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    white-space: nowrap;
-                    border-left-width: 2px;
-                    border-left-style: solid;
-                }
-                .plan-pill.completed {
-                    background: #d1fae5; color: #065f46; border-left-color: #10b981;
-                }
-                .plan-pill.assigned {
-                    background: rgba(37, 99, 235, 0.1); color: #1e40af; border-left-color: #3b82f6;
-                }
-                .plan-pill.pending {
-                    background: rgba(227, 6, 19, 0.1); color: var(--tibcon-red); border-left-color: var(--tibcon-red);
-                }
-
-                /* MOBILE RESPONSIVE */
+                /* Additional utility styles */
                 @media (max-width: 768px) {
-                    .planning-grid {
-                        grid-template-columns: 1fr;
-                        gap: 1rem;
+                    .sidebar-card {
+                        display: none;
                     }
-                    .calendar-day-name {
-                        padding: 2px;
-                        font-size: 0.65rem;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                    }
-                    .calendar-cell {
-                        min-height: 70px; /* Reduced specific height for mobile */
-                        padding: 2px;
-                    }
-                    .calendar-date-header {
-                        font-size: 0.8rem;
-                        margin-bottom: 2px;
-                    }
-                    .today-badge {
-                        padding: 1px 3px;
-                        font-size: 0.55rem;
-                    }
-                    .plan-pill {
-                        font-size: 0.6rem;
-                        padding: 1px 2px;
-                    }
-                    /* Calendar Cell Styles Override via global or targeted class would be ideal, 
-                       but since inline styles are used above, we might rely on the viewport changes 
-                       and some shrinking here if possible, or just accept the grid squeezes. 
-                       Actually, let's fix the inline styles in renderCalendar to be classes effectively? 
-                       No, I'll just rely on the general shrinking 
-                       and Ensure the container doesn't overflow */
-                    
-                    .premium-card {
-                        border-radius: 8px; /* Smaller radius */
+
+                    .modal-content {
+                        padding: 1.5rem;
+                        border-radius: 12px;
                     }
                 }
             `}</style>
         </div>
     );
 }
+
+
+
+
+
+
+
+
+
+
+
+

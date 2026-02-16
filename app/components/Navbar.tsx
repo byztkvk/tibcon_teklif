@@ -28,51 +28,51 @@ export default function Navbar() {
                         alt="TIBCON"
                         style={{ height: "45px" }}
                     />
-                    <span className="outfit" style={{ fontSize: "1.1rem", fontWeight: 800 }}>TİBCON TEKLİF MODÜLÜ</span>
+                    <span className="outfit hide-text-mobile" style={{ fontSize: "1.1rem", fontWeight: 800 }}>TİBCON TEKLİF MODÜLÜ</span>
                 </div>
 
                 <div style={menuStyle}>
                     <button
                         onClick={() => router.push("/")}
-                        className="tibcon-btn tibcon-btn-outline"
+                        className="tibcon-btn tibcon-btn-outline nav-btn-mobile"
                         style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}
                     >
-                        Ana Sayfa
+                        <span>🏠</span> <span className="hide-text-mobile">Ana Sayfa</span>
                     </button>
 
                     <button
                         onClick={() => router.push("/agenda")}
-                        className="tibcon-btn tibcon-btn-outline"
+                        className="tibcon-btn tibcon-btn-outline nav-btn-mobile"
                         style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}
                     >
-                        📅 Ajanda
+                        <span>📅</span> <span className="hide-text-mobile">Ajanda</span>
                     </button>
 
                     <button
                         onClick={() => router.push("/compensation")}
-                        className="tibcon-btn tibcon-btn-outline"
+                        className="tibcon-btn tibcon-btn-outline nav-btn-mobile"
                         style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}
                     >
-                        ⚡ Kompanzasyon
+                        <span>⚡</span> <span className="hide-text-mobile">Kompanzasyon</span>
                     </button>
 
                     {/* MANAGER REPORTS LINK */}
                     {["region_manager", "admin"].includes(JSON.parse(localStorage.getItem("tibcon_session") || "{}")?.role) && (
                         <button
                             onClick={() => router.push("/reports")}
-                            className="tibcon-btn tibcon-btn-outline"
+                            className="tibcon-btn tibcon-btn-outline nav-btn-mobile"
                             style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}
                         >
-                            📊 Raporlar
+                            <span>📊</span> <span className="hide-text-mobile">Raporlar</span>
                         </button>
                     )}
 
                     <button
                         onClick={handleLogout}
-                        className="tibcon-btn"
+                        className="tibcon-btn nav-btn-mobile"
                         style={{ padding: "0.5rem 1rem", fontSize: "0.85rem", color: "var(--tibcon-red)", borderColor: "var(--tibcon-red)", background: "transparent" }}
                     >
-                        Çıkış Yap
+                        <span>🚪</span> <span className="hide-text-mobile">Çıkış Yap</span>
                     </button>
                 </div>
             </div>

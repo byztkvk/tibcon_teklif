@@ -77,104 +77,238 @@ export default function VisitsPage() {
     };
 
     // Calendar logic
+    const [calendarView, setCalendarView] = useState<"month" | "week">("month");
+    const [isMobile, setIsMobile] = useState(false);
+    const [selectedDayForDetail, setSelectedDayForDetail] = useState<{ date: Date, visits: any[] } | null>(null);
+
+    useEffect(() => {
+        const checkMobile = () => {
+            setIsMobile(window.innerWidth < 768);
+        };
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
+
+    // Calendar logic
     const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
     const firstDayOfMonth = (year: number, month: number) => {
         let day = new Date(year, month, 1).getDay();
         return day === 0 ? 6 : day - 1; // 0 (Mon) to 6 (Sun)
     };
 
+    const getWeekDays = (date: Date) => {
+        const startOfWeek = new Date(date);
+        const day = startOfWeek.getDay();
+        const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); // Adjust when day is Sunday
+        startOfWeek.setDate(diff);
+
+        const days = [];
+        for (let i = 0; i < 7; i++) {
+            const d = new Date(startOfWeek);
+            d.setDate(startOfWeek.getDate() + i);
+            days.push(d);
+        }
+        return days;
+    };
+
+    const handlePrev = () => {
+        const newDate = new Date(currentDate);
+        if (calendarView === "month") {
+            newDate.setMonth(newDate.getMonth() - 1);
+        } else {
+            newDate.setDate(newDate.getDate() - 7);
+        }
+        setCurrentDate(newDate);
+    };
+
+    const handleNext = () => {
+        const newDate = new Date(currentDate);
+        if (calendarView === "month") {
+            newDate.setMonth(newDate.getMonth() + 1);
+        } else {
+            newDate.setDate(newDate.getDate() + 7);
+        }
+        setCurrentDate(newDate);
+    };
+
     const renderCalendar = () => {
         const year = currentDate.getFullYear();
         const month = currentDate.getMonth();
-        const totalDays = daysInMonth(year, month);
-        const startDay = firstDayOfMonth(year, month);
-        const monthName = new Intl.DateTimeFormat('tr-TR', { month: 'long' }).format(currentDate);
 
-        const days = [];
-        // Empty cells for the start
-        for (let i = 0; i < startDay; i++) {
-            days.push(<div key={`empty-${i}`} style={{ background: "#fcfcfc", border: "1px solid #eee" }}></div>);
-        }
+        let daysToRender = [];
+        let title = "";
 
-        // Days
-        for (let d = 1; d <= totalDays; d++) {
-            const dayStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-            const dayVisits = filteredVisits.filter(v => {
-                const vDate = new Date(v.ZiyaretTarih);
-                const compareDate = new Date(dayStr);
-                return vDate.getFullYear() === compareDate.getFullYear() &&
-                    vDate.getMonth() === compareDate.getMonth() &&
-                    vDate.getDate() === compareDate.getDate();
-            });
+        if (calendarView === "month") {
+            const totalDays = daysInMonth(year, month);
+            const startDay = firstDayOfMonth(year, month);
+            title = new Intl.DateTimeFormat('tr-TR', { month: 'long', year: 'numeric' }).format(currentDate);
 
-            days.push(
-                <div key={d} style={{
-                    minHeight: "140px",
-                    background: "white",
-                    border: "1px solid #eee",
-                    display: "flex",
-                    flexDirection: "column",
-                    padding: "8px"
-                }}>
-                    <div style={{ fontWeight: 700, fontSize: "0.9rem", color: dayVisits.length > 0 ? "var(--tibcon-red)" : "#adb5bd", marginBottom: "8px" }}>
-                        {d}
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "4px", overflowY: "auto", flex: 1 }}>
-                        {dayVisits.map((v, i) => (
-                            <div
-                                key={i}
-                                onClick={() => setSelectedVisit(v)}
-                                style={{
-                                    background: "rgba(180, 0, 0, 0.08)",
-                                    color: "var(--tibcon-red)",
-                                    fontSize: "0.75rem",
-                                    padding: "4px 8px",
-                                    borderRadius: "4px",
-                                    fontWeight: 700,
-                                    borderLeft: "3px solid var(--tibcon-red)",
-                                    whiteSpace: "nowrap",
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    cursor: "pointer"
-                                }}
-                                title={`${v.FirmaAdi} - ${v.SatisPersoneli}`}
-                            >
-                                {v.FirmaAdi}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            );
+            // Empty cells for the start
+            for (let i = 0; i < startDay; i++) {
+                daysToRender.push(<div key={`empty-${i}`} style={{ background: "#fcfcfc", borderRight: "1px solid #eee", borderBottom: "1px solid #eee" }}></div>);
+            }
+
+            // Days
+            for (let d = 1; d <= totalDays; d++) {
+                const dayDate = new Date(year, month, d);
+                daysToRender.push(renderDayCell(dayDate));
+            }
+        } else {
+            // Week view
+            const weekDays = getWeekDays(currentDate);
+            const startStr = new Intl.DateTimeFormat('tr-TR', { month: 'short', day: 'numeric' }).format(weekDays[0]);
+            const endStr = new Intl.DateTimeFormat('tr-TR', { month: 'short', day: 'numeric', year: 'numeric' }).format(weekDays[6]);
+            title = `${startStr} - ${endStr}`;
+
+            daysToRender = weekDays.map(d => renderDayCell(d));
         }
 
         return (
             <div style={{ width: "100%" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem", flexWrap: "wrap", gap: "10px" }}>
                     <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
-                        <h2 className="outfit" style={{ margin: 0, textTransform: "capitalize", fontSize: "1.8rem" }}>{monthName} {year}</h2>
+                        <h2 className="outfit" style={{ margin: 0, textTransform: "capitalize", fontSize: isMobile ? "1.2rem" : "1.5rem" }}>{title}</h2>
                     </div>
-                    <div style={{ display: "flex", gap: "0.5rem" }}>
-                        <button onClick={() => setCurrentDate(new Date(year, month - 1, 1))} className="tibcon-btn tibcon-btn-outline" style={{ padding: "0.5rem 1rem" }}>Geri</button>
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                        <div style={{ display: "flex", background: "#f8f9fa", padding: "3px", borderRadius: "8px", border: "1px solid #eee", marginRight: "10px" }}>
+                            <button
+                                onClick={() => setCalendarView("month")}
+                                style={{
+                                    padding: "4px 12px", borderRadius: "6px", border: "none",
+                                    background: calendarView === "month" ? "white" : "transparent",
+                                    color: calendarView === "month" ? "var(--tibcon-red)" : "#666",
+                                    fontWeight: 600, cursor: "pointer", boxShadow: calendarView === "month" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                                    fontSize: "0.85rem"
+                                }}
+                            >
+                                Aylık
+                            </button>
+                            <button
+                                onClick={() => setCalendarView("week")}
+                                style={{
+                                    padding: "4px 12px", borderRadius: "6px", border: "none",
+                                    background: calendarView === "week" ? "white" : "transparent",
+                                    color: calendarView === "week" ? "var(--tibcon-red)" : "#666",
+                                    fontWeight: 600, cursor: "pointer", boxShadow: calendarView === "week" ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                                    fontSize: "0.85rem"
+                                }}
+                            >
+                                Haftalık
+                            </button>
+                        </div>
+
+                        <button onClick={handlePrev} className="tibcon-btn tibcon-btn-outline" style={{ padding: "0.5rem 0.8rem" }}>←</button>
                         <button onClick={() => setCurrentDate(new Date())} className="tibcon-btn tibcon-btn-outline" style={{ padding: "0.5rem 1rem" }}>Bugün</button>
-                        <button onClick={() => setCurrentDate(new Date(year, month + 1, 1))} className="tibcon-btn tibcon-btn-outline" style={{ padding: "0.5rem 1rem" }}>İleri</button>
+                        <button onClick={handleNext} className="tibcon-btn tibcon-btn-outline" style={{ padding: "0.5rem 0.8rem" }}>→</button>
                     </div>
                 </div>
 
-                <div style={{
+                <div className="calendar-grid-container" style={{
                     display: "grid",
                     gridTemplateColumns: "repeat(7, 1fr)",
                     border: "1px solid #eee",
                     borderRadius: "12px",
                     overflow: "hidden",
-                    background: "#eee",
-                    gap: "1px"
+                    background: "#fff",
                 }}>
                     {["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"].map(day => (
-                        <div key={day} style={{ background: "#f8f9fa", padding: "12px", textAlign: "center", fontWeight: 700, fontSize: "0.8rem", color: "#666" }}>
-                            {day}
+                        <div key={day} style={{ background: "#f8f9fa", padding: "12px 4px", textAlign: "center", fontWeight: 700, fontSize: isMobile ? "0.65rem" : "0.8rem", color: "#666", borderBottom: "1px solid #eee", borderRight: "1px solid #eee", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {isMobile ? day.substring(0, 3) : day}
                         </div>
                     ))}
-                    {days}
+                    {daysToRender}
+                </div>
+            </div>
+        );
+    };
+
+    const renderDayCell = (date: Date) => {
+        const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        const dayVisits = filteredVisits.filter(v => {
+            const vDate = new Date(v.ZiyaretTarih);
+            return vDate.getFullYear() === date.getFullYear() &&
+                vDate.getMonth() === date.getMonth() &&
+                vDate.getDate() === date.getDate();
+        });
+
+        const isToday = new Date().toDateString() === date.toDateString();
+        const displayVisits = isMobile ? dayVisits.slice(0, 2) : dayVisits;
+        const remaining = dayVisits.length - displayVisits.length;
+
+        return (
+            <div key={dateStr} className="day-cell" style={{
+                minHeight: calendarView === "week" ? "300px" : (isMobile ? "80px" : "120px"),
+                background: isToday ? "#fff8f8" : "white",
+                borderRight: "1px solid #eee",
+                borderBottom: "1px solid #eee",
+                display: "flex",
+                flexDirection: "column",
+                padding: isMobile ? "4px" : "8px",
+                minWidth: 0, // Critical for text-overflow to work in grid
+                overflow: "hidden",
+                cursor: isMobile ? "pointer" : "default"
+            }} onClick={() => isMobile && dayVisits.length > 0 && setSelectedDayForDetail({ date, visits: dayVisits })}>
+                <div style={{
+                    fontWeight: 700,
+                    fontSize: "0.9rem",
+                    color: dayVisits.length > 0 ? "var(--tibcon-red)" : "#adb5bd",
+                    marginBottom: "4px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center"
+                }}>
+                    <span style={isToday ? { background: "var(--tibcon-red)", color: "white", padding: "2px 6px", borderRadius: "4px", fontSize: isMobile ? "0.7rem" : "0.8rem" } : { fontSize: isMobile ? "0.8rem" : "0.9rem" }}>
+                        {date.getDate()}
+                    </span>
+                    {calendarView === "week" && <span style={{ fontSize: isMobile ? "0.6rem" : "0.75rem", fontWeight: 400, color: "#999", display: isMobile ? "none" : "inline" }}>{date.toLocaleDateString("tr-TR", { weekday: 'short' })}</span>}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: isMobile ? "2px" : "4px", overflowY: "hidden", flex: 1 }}>
+                    {displayVisits.map((v, i) => (
+                        <div
+                            key={i}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedVisit(v);
+                            }}
+                            style={{
+                                background: "rgba(180, 0, 0, 0.08)",
+                                color: "var(--tibcon-red)",
+                                fontSize: isMobile ? "0.65rem" : "0.75rem",
+                                padding: isMobile ? "2px 4px" : "4px 8px",
+                                borderRadius: "4px",
+                                fontWeight: 700,
+                                borderLeft: "3px solid var(--tibcon-red)",
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                cursor: "pointer",
+                                lineHeight: "1.2"
+                            }}
+                            title={`${v.FirmaAdi} - ${v.SatisPersoneli}`}
+                        >
+                            {v.FirmaAdi}
+                        </div>
+                    ))}
+                    {remaining > 0 && (
+                        <div
+                            style={{
+                                fontSize: isMobile ? "0.6rem" : "0.7rem",
+                                color: "#666",
+                                textAlign: "center",
+                                cursor: "pointer",
+                                padding: "2px",
+                                background: "#f0f0f0",
+                                borderRadius: "4px"
+                            }}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedDayForDetail({ date, visits: dayVisits });
+                            }}
+                        >
+                            +{remaining} daha
+                        </div>
+                    )}
                 </div>
             </div>
         );
@@ -378,10 +512,58 @@ export default function VisitsPage() {
                 </div>
             )}
 
+            {/* Day Details Modal for Mobile */}
+            {selectedDayForDetail && (
+                <div style={{
+                    position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+                    background: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center",
+                    alignItems: "center", zIndex: 1000, padding: "2rem"
+                }} onClick={() => setSelectedDayForDetail(null)}>
+                    <div style={{
+                        background: "white", borderRadius: "12px", width: "100%", maxWidth: "400px",
+                        maxHeight: "80vh", display: "flex", flexDirection: "column",
+                        boxShadow: "0 20px 40px rgba(0,0,0,0.2)", position: "relative",
+                        animation: "modalFadeUp 0.3s ease-out"
+                    }} onClick={e => e.stopPropagation()}>
+                        <div style={{ padding: "1rem", borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <h3 className="outfit" style={{ margin: 0 }}>
+                                {selectedDayForDetail.date.toLocaleDateString("tr-TR", { day: 'numeric', month: 'long', year: 'numeric' })}
+                            </h3>
+                            <button onClick={() => setSelectedDayForDetail(null)} style={{ border: "none", background: "none", fontSize: "1.5rem", cursor: "pointer" }}>&times;</button>
+                        </div>
+                        <div style={{ padding: "1rem", overflowY: "auto" }}>
+                            {selectedDayForDetail.visits.length === 0 ? (
+                                <p style={{ textAlign: "center", color: "#666" }}>Kayıtlı ziyaret yok.</p>
+                            ) : (
+                                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                                    {selectedDayForDetail.visits.map((v, i) => (
+                                        <div key={i} onClick={() => { setSelectedDayForDetail(null); setSelectedVisit(v); }} style={{
+                                            padding: "10px", borderRadius: "8px", border: "1px solid #eee", background: "#f8f9fa", cursor: "pointer"
+                                        }}>
+                                            <div style={{ fontWeight: 700, color: "var(--tibcon-anth)", marginBottom: "4px" }}>{v.FirmaAdi}</div>
+                                            <div style={{ fontSize: "0.8rem", color: "#666" }}>{v.SatisPersoneli}</div>
+                                            <div style={{ fontSize: "0.75rem", color: "#999", marginTop: "4px" }}>{v.İl || v.Sehir} / {v.İlçe || v.ilce}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <style jsx>{`
                 @keyframes modalFadeUp {
                     from { opacity: 0; transform: translateY(20px); }
                     to { opacity: 1; transform: translateY(0); }
+                }
+                @media (max-width: 768px) {
+                    .calendar-grid-container {
+                        border-radius: 8px;
+                    }
+                    .premium-card {
+                        padding: 1rem !important;
+                    }
                 }
             `}</style>
             {loading && <LoadingOverlay message="Ziyaret verileri yükleniyor..." />}

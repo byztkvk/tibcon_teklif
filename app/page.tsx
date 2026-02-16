@@ -84,11 +84,11 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div style={gridStyle}>
+      <div style={gridStyle} className="mobile-grid-3">
         {menuItems.map((item) => (
           <div
             key={item.path}
-            className="premium-card"
+            className="premium-card mobile-card"
             style={{
               ...cardBaseStyle,
               background: item.color === "red" ? "var(--tibcon-red)" : "white",
@@ -96,20 +96,20 @@ export default function DashboardPage() {
             }}
             onClick={() => router.push(item.path)}
           >
-            <div style={iconBoxStyle}>
+            <div style={iconBoxStyle} className="mobile-icon">
               <span style={{ fontSize: "2.5rem" }}>{item.icon}</span>
             </div>
-            <h3 className="outfit" style={{ fontSize: "1.5rem", fontWeight: 700, margin: "1rem 0 0.5rem" }}>
+            <h3 className="outfit mobile-tiny-text" style={{ fontSize: "1.5rem", fontWeight: 700, margin: "1rem 0 0.5rem" }}>
               {item.title}
             </h3>
-            <p style={{
+            <p className="hide-text-mobile" style={{
               fontSize: "0.95rem",
               opacity: item.color === "red" ? 0.9 : 0.7,
               lineHeight: 1.5
             }}>
               {item.desc}
             </p>
-            <div style={{ marginTop: "auto", paddingTop: "1.5rem", alignSelf: "flex-end" }}>
+            <div className="hide-text-mobile" style={{ marginTop: "auto", paddingTop: "1.5rem", alignSelf: "flex-end" }}>
               <span style={{ fontSize: "1.2rem", fontWeight: 800 }}>→</span>
             </div>
           </div>
