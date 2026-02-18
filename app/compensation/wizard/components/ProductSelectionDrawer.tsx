@@ -67,12 +67,30 @@ export function ProductSelectionDrawer({ slot, systemVoltage, index, onSelect, o
                 if (!mainCat.includes("RÖLE") && !typeCat.includes("RÖLE") && !name.includes("RÖLE")) return false;
             }
             else if (slot.type === "CURRENT_TRANSFORMER") {
-                if (isTBE) return true;
-                const isCt = mainCat.includes("AKIM") || typeCat.includes("AKIM") || name.includes("AKIM") ||
-                    mainCat.includes("OG") || typeCat.includes("OG") || name.includes("OG");
-                const isToroidal = mainCat.includes("TOROİDAL") || typeCat.includes("TOROİDAL") || name.includes("TOROİDAL") ||
-                    mainCat.includes("TOROIDAL") || typeCat.includes("TOROIDAL") || name.includes("TOROIDAL");
-                if (!isCt && !isToroidal) return false;
+                const s = (mainCat + " " + typeCat + " " + name + " " + p.productCode).toUpperCase();
+
+                // Kapsayıcı CT kontrolü
+                const isCt =
+                    s.includes("AKIM") ||
+                    s.includes("TRAFO") ||
+                    s.includes("CURRENT") ||
+                    s.includes("TRANSFORMER") ||
+                    s.includes("TOROID") ||
+                    s.includes("OAT") ||     // OG Akım Trafosu kodu
+                    s.includes("ACT") ||     // AG Akım Trafosu kodu
+                    s.includes("/5") ||      // 50/5 A
+                    s.includes("/1") ||      // 100/1 A
+                    s.includes("CT ");       // CT boşluk
+
+                // Hariç tutulacaklar
+                const isExcluded =
+                    s.includes("KONDANSATOR") ||
+                    s.includes("KONDANSATÖR") ||
+                    s.includes("GKR") ||     // Röle
+                    s.includes("RÖLE") ||
+                    s.includes("ANALİZÖR");
+
+                if (!isCt || isExcluded) return false;
             }
             else if (slot.type === "SHUNT" || slot.type.startsWith("SVC_SHUNT")) {
                 if (!mainCat.includes("ŞÖNT") && !typeCat.includes("ŞÖNT") && !name.includes("ŞÖNT")) return false;

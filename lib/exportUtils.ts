@@ -44,20 +44,69 @@ function fmtPDF(num: number, currency: string) {
     return `${num.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${sym}`;
 }
 
-export async function exportToPDF(quote: any, ownerDetails: any) {
+// Helper function to convert Blob to Data URL for PDF embedding
+function blobToDataURL(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+}
+
+export async function exportToPDF(quote: any, ownerDetails: any, diagramBlob?: Blob | null) {
     const doc = new jsPDF("p", "mm", "a4");
     const pageWidth = doc.internal.pageSize.getWidth();
+    let startY = 2; // Track where content starts
 
     // 0. Modern Accent: Top Red Bar
     doc.setFillColor(227, 6, 19);
     doc.rect(0, 0, pageWidth, 2, "F");
 
+    // === IF DIAGRAM EXISTS, EMBED IT FIRST ===
+    if (diagramBlob) {
+        try {
+            // Add diagram image
+            const diagramDataUrl = await blobToDataURL(diagramBlob);
+            const imgProps = doc.getImageProperties(diagramDataUrl);
+
+            // Calculate dimensions to fit page width with margins
+            const maxWidth = pageWidth - 24; // 12mm margin each side
+            const scaleFactor = maxWidth / imgProps.width;
+            const imgWidth = maxWidth;
+            const imgHeight = imgProps.height * scaleFactor;
+
+            // Add title for diagram
+            startY = 8;
+            doc.setFontSize(11);
+            doc.setTextColor(50);
+            doc.setFont("helvetica", "bold");
+            doc.text("TEK HAT SEMASI", pageWidth / 2, startY, { align: "center" });
+            startY += 8;
+
+            // Add diagram image
+            doc.addImage(diagramDataUrl, "PNG", 12, startY, imgWidth, imgHeight);
+            startY += imgHeight + 10; // Add spacing after diagram
+
+            // If diagram takes too much space, start BOM on new page
+            if (startY > 200) {
+                doc.addPage();
+                startY = 5;
+            }
+        } catch (e) {
+            console.warn("Diagram embedding error:", e);
+            startY = 5;
+        }
+    } else {
+        startY = 5;
+    }
+
     // 1. Logo (Enlarged and perfectly aligned)
-    const logoY = 5;
+    const logoY = startY;
     const logoWidth = 90;
     try {
         const logoUrl = "/tibcon-logo-orjinal.png";
-        // Width increased to 90, Y=5
+        // Width increased to 90
         doc.addImage(logoUrl, "PNG", 15, logoY, logoWidth, 0);
     } catch (e) {
         console.warn("Logo error", e);
@@ -67,13 +116,13 @@ export async function exportToPDF(quote: any, ownerDetails: any) {
     doc.setFontSize(7);
     doc.setTextColor(110);
     // Move address down to roughly center it next to the logo
-    const addressStartY = 11;
+    const addressStartY = startY + 6;
     doc.text("TIBCON ENERJI TEKNOLOJILERI A.S.", pageWidth - 15, addressStartY, { align: "right" });
     doc.text("GULALIBEY MH. YENIDOGAN 4. SK, NO: 4/A CORUM / TURKIYE", pageWidth - 15, addressStartY + 3, { align: "right" });
     doc.text("TEL: +90 (364) 225 57 69  FAKS: +90 (364) 225 56 57", pageWidth - 15, addressStartY + 6, { align: "right" });
 
-    // 2. Info Grid (Pushed down to 60mm to ensure no logo overlap)
-    const infoYStart = 60;
+    // 2. Info Grid (Pushed down to ensure no logo overlap)
+    const infoYStart = startY + 55;
 
     // Subtle background for info section
     doc.setFillColor(245, 247, 250);

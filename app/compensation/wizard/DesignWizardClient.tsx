@@ -17,7 +17,7 @@ import LoadingOverlay from "@/components/LoadingOverlay";
 // --- Sub-components (Inline for now, can extract later) ---
 import { TopBar } from "./components/TopBar";
 import { SystemParamsPanel } from "./components/SystemParamsPanel";
-import { SingleLineDiagram } from "./components/SingleLineDiagram";
+import { DiagramContainer } from "./components/DiagramContainer";
 import { ProductSelectionDrawer } from "./components/ProductSelectionDrawer";
 import { BomModal } from "./components/BomModal";
 import { StepDetailModal } from "./components/StepDetailModal";
@@ -42,7 +42,7 @@ export default function DesignWizardClient() {
         svc: {
             active: false,
             driver: [],
-            fuse: undefined,
+            fuse: [],
             shunts: [[], [], []]
         },
         steps: createEmptySteps(12)
@@ -148,7 +148,7 @@ export default function DesignWizardClient() {
             return design.svc.driver;
         }
         if (type === "SVC_FUSE") {
-            return design.svc.fuse ? [{ product: design.svc.fuse.product, qty: design.svc.fuse.qty }] : [];
+            return design.svc.fuse;   // artık array
         }
         if (type.startsWith("SVC_SHUNT_")) {
             const idx = parseInt(type.split("_")[2]) - 1;
@@ -189,11 +189,11 @@ export default function DesignWizardClient() {
                     svc: { ...prev.svc, active: true, driver: [...(prev.svc.driver || []), { product, qty }] }
                 };
             }
-            // 2b. SVC FUSE
+            // 2b. SVC FUSE — array'e ekle
             if (type === "SVC_FUSE") {
                 return {
                     ...prev,
-                    svc: { ...prev.svc, active: true, fuse: { product, qty } }
+                    svc: { ...prev.svc, active: true, fuse: [...prev.svc.fuse, { product, qty }] }
                 };
             }
 
@@ -239,7 +239,7 @@ export default function DesignWizardClient() {
                 return { ...prev, svc: { ...prev.svc, driver: [] } };
             }
             if (type === "SVC_FUSE") {
-                return { ...prev, svc: { ...prev.svc, fuse: undefined } };
+                return { ...prev, svc: { ...prev.svc, fuse: [] } };  // array'i temizle
             }
             if (type.startsWith("SVC_SHUNT_")) {
                 const idx = parseInt(type.split("_")[2]) - 1;
@@ -320,7 +320,10 @@ export default function DesignWizardClient() {
                 const newDriver = prev.svc.driver.filter((_, i) => i !== idx);
                 return { ...prev, svc: { ...prev.svc, driver: newDriver } };
             }
-            if (type === "SVC_FUSE") return { ...prev, svc: { ...prev.svc, fuse: undefined } };
+            if (type === "SVC_FUSE") {
+                const newFuse = prev.svc.fuse.filter((_, i) => i !== idx);
+                return { ...prev, svc: { ...prev.svc, fuse: newFuse } };
+            }
             if (type.startsWith("SVC_SHUNT_")) {
                 const sIdx = parseInt(type.split("_")[2]) - 1;
                 const newShunts = [...prev.svc.shunts];
@@ -400,9 +403,9 @@ export default function DesignWizardClient() {
         design.svc.driver.forEach(d => {
             totalPrice += d.product.listPrice * d.qty;
         });
-        if (design.svc.fuse) {
-            totalPrice += design.svc.fuse.product.listPrice * design.svc.fuse.qty;
-        }
+        design.svc.fuse.forEach(f => {
+            totalPrice += f.product.listPrice * f.qty;
+        });
         design.svc.shunts.forEach(phaseList => {
             phaseList.forEach(s => {
                 totalPrice += s.product.listPrice * s.qty;
@@ -445,7 +448,7 @@ export default function DesignWizardClient() {
 
         // 2. SVC
         design.svc.driver.forEach(d => addToBom(d.product, d.qty));
-        if (design.svc.fuse) addToBom(design.svc.fuse.product, design.svc.fuse.qty);
+        design.svc.fuse.forEach(f => addToBom(f.product, f.qty));
         design.svc.shunts.forEach(phaseList => {
             phaseList.forEach(s => addToBom(s.product, s.qty));
         });
@@ -502,10 +505,17 @@ export default function DesignWizardClient() {
                 metrics={metrics}
                 onViewBom={() => setShowBomModal(true)}
                 onToQuote={handleToQuote}
+                design={design}
+                session={session}
             />
 
             {/* MAIN CONTENT */}
             <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
+
+                {/* MOBILE OVERLAY */}
+                {isMobileSidebarOpen && (
+                    <div className="mobile-overlay" onClick={() => setIsMobileSidebarOpen(false)} />
+                )}
 
                 {/* LEFT: SYSTEM PARAMS (SIDEBAR) */}
                 <div className={`sidebar-panel ${isMobileSidebarOpen ? "open" : ""}`}>
@@ -524,16 +534,10 @@ export default function DesignWizardClient() {
                     <div style={{ marginTop: "2rem", padding: "1rem", background: "#eef2f5", borderRadius: "8px", fontSize: "0.85rem" }}>
                         <strong>Nasıl Kullanılır?</strong>
                         <ul style={{ paddingLeft: "1.2rem", marginTop: "0.5rem", color: "#666" }}>
-                            <li>Röle hattı üzerindeki (O) simgesine tıklayarak Akım Trafosu ekleyin.</li>
-                            <li>Röle kutusuna tıklayarak röle seçin.</li>
-                            <li>SVC kutusuna tıklayarak sürücü ekleyin.</li>
-                            <li>Kademelere tıklayarak kondansatör/şönt ekleyin.</li>
+                            <li>(O) Akım Trafosu, Röle, SVC ve Kademelere tıklayarak ürün ekleyin/çýkarın.</li>
                         </ul>
                     </div>
                 </div>
-
-                {/* MOBILE OVERLAY */}
-                {isMobileSidebarOpen && <div className="mobile-overlay" onClick={() => setIsMobileSidebarOpen(false)} />}
 
                 {/* CENTER: DIAGRAM */}
                 <div className="diagram-area">
@@ -549,7 +553,7 @@ export default function DesignWizardClient() {
                         </button>
                     </div>
 
-                    <SingleLineDiagram
+                    <DiagramContainer
                         design={design}
                         onSlotClick={(stepId, type) => {
                             const items = getItemsForSlot(stepId, type);
@@ -563,14 +567,10 @@ export default function DesignWizardClient() {
                                 setDetailModalOpen(true);
                             }
                         }}
-                        onToggleStep={(stepId) => toggleStepActive(stepId)}
-                        onStepCopy={copyStepToAll}
-                        onRemoveComponent={removeComponent}
                     />
                 </div>
             </div>
 
-            {/* PRODUCT SELECTION DRAWER */}
             {/* PRODUCT SELECTION DRAWER */}
             {drawerOpen && selectedSlot && productIndex && (
                 <ProductSelectionDrawer
@@ -580,26 +580,31 @@ export default function DesignWizardClient() {
                     onSelect={(p, qty) => selectProductForSlot(selectedSlot.stepId, selectedSlot.type, p, qty)}
                     onClose={() => setDrawerOpen(false)}
                 />
-            )}
+            )
+            }
 
             {/* STEP DETAIL MODAL */}
-            {detailModalOpen && detailSlot && (
-                <StepDetailModal
-                    title={`${detailSlot.type === "RELAY" ? "Röle" : detailSlot.type === "SVC_DRIVER" ? "Sürücü" : `Kademe ${detailSlot.stepId} - ${detailSlot.type}`}`}
-                    items={getItemsForSlot(detailSlot.stepId, detailSlot.type)}
-                    onRemove={(idx) => removeProductAtIndex(detailSlot.stepId, detailSlot.type, idx)}
-                    onAdd={openProductDrawer}
-                    onClose={closeDetailModal}
-                />
-            )}
+            {
+                detailModalOpen && detailSlot && (
+                    <StepDetailModal
+                        title={`${detailSlot.type === "RELAY" ? "Röle" : detailSlot.type === "SVC_DRIVER" ? "Sürücü" : `Kademe ${detailSlot.stepId} - ${detailSlot.type}`}`}
+                        items={getItemsForSlot(detailSlot.stepId, detailSlot.type)}
+                        onRemove={(idx) => removeProductAtIndex(detailSlot.stepId, detailSlot.type, idx)}
+                        onAdd={openProductDrawer}
+                        onClose={closeDetailModal}
+                    />
+                )
+            }
 
             {/* BOM MODAL */}
-            {showBomModal && (
-                <BomModal
-                    design={design}
-                    onClose={() => setShowBomModal(false)}
-                />
-            )}
+            {
+                showBomModal && (
+                    <BomModal
+                        design={design}
+                        onClose={() => setShowBomModal(false)}
+                    />
+                )
+            }
 
             <style jsx>{`
                 .sidebar-panel {
@@ -679,6 +684,6 @@ export default function DesignWizardClient() {
                     }
                 }
             `}</style>
-        </div>
+        </div >
     );
 }

@@ -31,10 +31,10 @@ export interface DesignState {
         selectedProduct?: ComponentSelection;
     };
     svc: {
-        active: boolean; // Is SVC section enabled?
-        driver: ComponentSelection[]; // "ENDÜKTİF YÜK SÜRÜCÜ" - Now an array
-        fuse?: ComponentSelection; // NEW: Fuse for SVC line
-        shunts: ComponentSelection[][]; // Fixed 3 slots, each containing a list of components
+        active: boolean;
+        driver: ComponentSelection[];
+        fuse: ComponentSelection[];   // NH Yük Ayırıcı — birden fazla olabilir
+        shunts: ComponentSelection[][];
     };
     steps: Record<number, WizardStep>;
 }
@@ -47,12 +47,9 @@ export const INITIAL_DESIGN_STATE: DesignState = {
     },
     svc: {
         active: false,
-        driver: [], // Initialized as array
-        shunts: [
-            [], // L1 Components
-            [], // L2 Components
-            [], // L3 Components
-        ]
+        driver: [],
+        fuse: [],          // array olarak başlat
+        shunts: [[], [], []],
     },
     steps: {}
 };

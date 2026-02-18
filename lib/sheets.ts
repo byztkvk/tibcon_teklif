@@ -231,6 +231,10 @@ export async function addVisitPlan(payload: any) {
 export async function updateVisitPlanStatus(payload: { id: string, status: string }) {
   return postJSON({ action: "updateVisitPlanStatus", ...payload });
 }
+
+export async function updateVisitPlanDate(payload: { id: string, plannedDate: string }) {
+  return postJSON({ action: "updateVisitPlanDate", ...payload });
+}
 // Region Management Functions
 export async function listRegions(): Promise<{ regions: string[] } | null> {
   return postJSON({ action: "listRegions" });

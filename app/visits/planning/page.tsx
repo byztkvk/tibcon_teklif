@@ -1,8 +1,28 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { listSalesPoints, listVisitPlans, listUsers, addVisitPlan, updateVisitPlanStatus, requestPlanChange, resolvePlanChange, getSettings } from "@/lib/sheets";
+import FullCalendar from "@fullcalendar/react";
+import dayGridPlugin from "@fullcalendar/daygrid";
+import timeGridPlugin from "@fullcalendar/timegrid";
+import listPlugin from "@fullcalendar/list";
+import interactionPlugin from "@fullcalendar/interaction";
+import type { EventInput } from "@fullcalendar/core";
+// Callback arg types are typed as any for cross-version compatibility
+import {
+    listSalesPoints,
+    listVisitPlans,
+    listUsers,
+    addVisitPlan,
+    updateVisitPlanStatus,
+    updateVisitPlanDate,
+    requestPlanChange,
+    resolvePlanChange,
+    getSettings,
+} from "@/lib/sheets";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+type VisitStatus = "PENDING" | "COMPLETED" | "CANCELLED" | "OFFERED";
 
 type VisitPlan = {
     id: string;
@@ -10,41 +30,99 @@ type VisitPlan = {
     firmaAdi: string;
     sehir: string;
     ilce: string;
-    plannedDate: string; // YYYY-MM-DD
+    plannedDate: string;
     notes: string;
-    status: "PENDING" | "COMPLETED" | "CANCELLED";
+    status: VisitStatus;
     createdAt: string;
-    assignedTo?: string; // Email of the rep
-    assignedByName?: string; // Name of the manager who assigned
+    assignedTo?: string;
+    assignedByName?: string;
     creatorId?: string;
     proposedDate?: string;
     proposedNote?: string;
 };
 
-const PLANS_KEY = "tibcon_plans";
+// ─── Status Config ─────────────────────────────────────────────────────────────
+const STATUS_CONFIG: Record<
+    VisitStatus,
+    { label: string; bg: string; text: string; border: string; dot: string }
+> = {
+    PENDING: {
+        label: "Planlandı",
+        bg: "#dbeafe",
+        text: "#1e40af",
+        border: "#3b82f6",
+        dot: "#3b82f6",
+    },
+    COMPLETED: {
+        label: "Yapıldı",
+        bg: "#d1fae5",
+        text: "#065f46",
+        border: "#10b981",
+        dot: "#10b981",
+    },
+    CANCELLED: {
+        label: "İptal",
+        bg: "#fee2e2",
+        text: "#991b1b",
+        border: "#ef4444",
+        dot: "#ef4444",
+    },
+    OFFERED: {
+        label: "Teklif",
+        bg: "#fef3c7",
+        text: "#92400e",
+        border: "#f59e0b",
+        dot: "#f59e0b",
+    },
+};
 
+function statusToFCColor(status: VisitStatus): string {
+    const map: Record<VisitStatus, string> = {
+        PENDING: "#3b82f6",
+        COMPLETED: "#10b981",
+        CANCELLED: "#ef4444",
+        OFFERED: "#f59e0b",
+    };
+    return map[status] ?? "#6b7280";
+}
+
+function planToEvent(p: VisitPlan): EventInput {
+    return {
+        id: p.id,
+        title: p.firmaAdi,
+        start: p.plannedDate,
+        backgroundColor: statusToFCColor(p.status),
+        borderColor: statusToFCColor(p.status),
+        textColor: "#fff",
+        extendedProps: { plan: p },
+    };
+}
+
+// ─── Main Component ────────────────────────────────────────────────────────────
 export default function VisitPlanningPage() {
     const router = useRouter();
+
     const [loading, setLoading] = useState(true);
     const [plans, setPlans] = useState<VisitPlan[]>([]);
     const [salesPoints, setSalesPoints] = useState<any[]>([]);
     const [users, setUsers] = useState<any[]>([]);
     const [session, setSession] = useState<any>(null);
+    const [settings, setSettings] = useState<any>({});
 
-    // Calendar State
-    const [currentDate, setCurrentDate] = useState(new Date());
-    const [selectedDate, setSelectedDate] = useState<string | null>(null);
-    const [isMobile, setIsMobile] = useState(false);
-    const [dayDetails, setDayDetails] = useState<{ date: string, plans: VisitPlan[] } | null>(null);
+    // Agenda / filter state
+    const [selectedDate, setSelectedDate] = useState<string>(
+        new Date().toISOString().slice(0, 10)
+    );
+    const [searchQuery, setSearchQuery] = useState("");
+    const [activeFilters, setActiveFilters] = useState<Set<VisitStatus>>(
+        new Set(["PENDING", "COMPLETED", "CANCELLED", "OFFERED"])
+    );
 
-    useEffect(() => {
-        const check = () => setIsMobile(window.innerWidth < 768);
-        check();
-        window.addEventListener('resize', check);
-        return () => window.removeEventListener('resize', check);
-    }, []);
+    // Drawer state
+    const [drawerPlan, setDrawerPlan] = useState<VisitPlan | null>(null);
+    const [drawerOpen, setDrawerOpen] = useState(false);
 
-    // Modal State
+    // New Plan Modal state
     const [showModal, setShowModal] = useState(false);
     const [searchFirm, setSearchFirm] = useState("");
     const [showDropdown, setShowDropdown] = useState(false);
@@ -52,49 +130,35 @@ export default function VisitPlanningPage() {
     const [formNote, setFormNote] = useState("");
     const [selectedPoint, setSelectedPoint] = useState<any>(null);
     const [selectedRep, setSelectedRep] = useState<string>("");
+    const [saving, setSaving] = useState(false);
 
-    // Change Request Modal State
+    // Change Request Modal
     const [showChangeModal, setShowChangeModal] = useState(false);
     const [changeTxId, setChangeTxId] = useState<string | null>(null);
     const [changeDate, setChangeDate] = useState("");
     const [changeNote, setChangeNote] = useState("");
 
-    const [settings, setSettings] = useState<any>({});
-
-    // Initial Load
+    // ── Load ──────────────────────────────────────────────────────────────────
     useEffect(() => {
         const load = async () => {
             try {
-                // Parallel load for performance
                 const [sRes, pRes, spRes, uRes, setRes]: any[] = await Promise.all([
-                    // Session is local but let's emulate async structure if needed, or just do it
                     Promise.resolve(localStorage.getItem("tibcon_session")),
                     listVisitPlans(),
                     listSalesPoints(),
                     listUsers(),
-                    getSettings()
+                    getSettings(),
                 ]);
-
-                // Session
                 if (sRes) {
                     const s = JSON.parse(sRes);
                     setSession(s);
                     setSelectedRep(s.email);
                 }
-
-                // Plans
                 if (pRes?.plans) setPlans(pRes.plans);
-
-                // Points
                 if (spRes?.points) setSalesPoints(spRes.points);
                 else if (Array.isArray(spRes)) setSalesPoints(spRes);
-
-                // Users
                 if (uRes?.users) setUsers(uRes.users);
-
-                // Settings
                 if (setRes?.settings) setSettings(setRes.settings);
-
             } catch (e) {
                 console.error("Load Error", e);
             } finally {
@@ -104,22 +168,99 @@ export default function VisitPlanningPage() {
         load();
     }, []);
 
-    const filteredPoints = useMemo(() => {
-        if (!searchFirm) return [];
-        const lower = searchFirm.toLowerCase();
-        return salesPoints.filter(p => {
-            const name = (p.FirmaAdi || p["Firma Adı"] || "").toLowerCase();
-            return name.includes(lower);
-        }).slice(0, 10);
-    }, [salesPoints, searchFirm]);
+    // ── Derived ───────────────────────────────────────────────────────────────
+    const filteredEvents: EventInput[] = plans
+        .filter((p) => activeFilters.has(p.status))
+        .filter((p) =>
+            searchQuery
+                ? p.firmaAdi.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                p.sehir.toLowerCase().includes(searchQuery.toLowerCase())
+                : true
+        )
+        .map(planToEvent);
+
+    const agendaPlans = plans
+        .filter((p) => p.plannedDate === selectedDate && activeFilters.has(p.status))
+        .filter((p) =>
+            searchQuery
+                ? p.firmaAdi.toLowerCase().includes(searchQuery.toLowerCase())
+                : true
+        )
+        .sort((a, b) => a.firmaAdi.localeCompare(b.firmaAdi));
+
+    const filteredSalesPoints = searchFirm
+        ? salesPoints
+            .filter((p) => {
+                const name = (p.FirmaAdi || p["Firma Adı"] || "").toLowerCase();
+                return name.includes(searchFirm.toLowerCase());
+            })
+            .slice(0, 10)
+        : [];
+
+    // ── Handlers ──────────────────────────────────────────────────────────────
+    const toggleFilter = (status: VisitStatus) => {
+        setActiveFilters((prev) => {
+            const next = new Set(prev);
+            if (next.has(status)) next.delete(status);
+            else next.add(status);
+            return next;
+        });
+    };
+
+    const openDrawer = (plan: VisitPlan) => {
+        setDrawerPlan(plan);
+        setDrawerOpen(true);
+    };
+
+    const closeDrawer = () => {
+        setDrawerOpen(false);
+        setTimeout(() => setDrawerPlan(null), 300);
+    };
+
+    const handleEventClick = useCallback((info: any) => {
+        const plan = info.event.extendedProps.plan as VisitPlan;
+        openDrawer(plan);
+    }, []);
+
+    const handleDateClick = useCallback((info: any) => {
+        setSelectedDate(info.dateStr);
+        setFormDate(info.dateStr);
+    }, []);
+
+    const handleEventDrop = useCallback(
+        async (info: any) => {
+            const plan = info.event.extendedProps.plan as VisitPlan;
+            const newDate = info.event.startStr.slice(0, 10);
+
+            // Optimistic update
+            setPlans((prev) =>
+                prev.map((p) => (p.id === plan.id ? { ...p, plannedDate: newDate } : p))
+            );
+
+            try {
+                const res: any = await updateVisitPlanDate({ id: plan.id, plannedDate: newDate });
+                if (!res?.ok) throw new Error(res?.message || "Güncelleme başarısız");
+            } catch (e) {
+                console.error("EventDrop error", e);
+                // Revert optimistic update
+                setPlans((prev) =>
+                    prev.map((p) => (p.id === plan.id ? { ...p, plannedDate: plan.plannedDate } : p))
+                );
+                info.revert();
+                alert("Tarih güncellenemedi, lütfen tekrar deneyin.");
+            }
+        },
+        []
+    );
 
     const savePlan = async () => {
         if (!selectedPoint || !formDate) {
             alert("Lütfen bir firma ve tarih seçin.");
             return;
         }
-
-        const isManager = session?.role === "region_manager" || session?.role === "admin";
+        setSaving(true);
+        const isManager =
+            session?.role === "region_manager" || session?.role === "admin";
 
         const newPlan: VisitPlan = {
             id: crypto.randomUUID(),
@@ -132,40 +273,34 @@ export default function VisitPlanningPage() {
             status: "PENDING",
             createdAt: new Date().toISOString(),
             assignedTo: selectedRep || session?.email,
-            assignedByName: isManager ? (users.find(u => u.email === selectedRep)?.displayName || selectedRep) : undefined,
-            creatorId: session?.email
+            assignedByName: isManager
+                ? users.find((u) => u.email === selectedRep)?.displayName || selectedRep
+                : undefined,
+            creatorId: session?.email,
         };
 
-        const updated = [...plans, newPlan];
-        setPlans(updated);
+        setPlans((prev) => [...prev, newPlan]);
 
         try {
             const res: any = await addVisitPlan(newPlan);
-            if (!res || !res.ok) {
-                throw new Error(res?.message || "Kayıt başarısız");
-            }
+            if (!res?.ok) throw new Error(res?.message || "Kayıt başarısız");
+            setShowModal(false);
+            setSearchFirm("");
+            setFormNote("");
+            setSelectedPoint(null);
         } catch (e) {
             console.error("Save Error", e);
             alert("Plan kaydedilemedi! Lütfen tekrar deneyin.");
-            // Revert optimistic update
-            setPlans(plans);
-            return;
+            setPlans((prev) => prev.filter((p) => p.id !== newPlan.id));
+        } finally {
+            setSaving(false);
         }
-
-        // Reset and Close
-        setShowModal(false);
-        setSearchFirm("");
-        setFormNote("");
-        setSelectedPoint(null);
     };
 
     const deletePlan = async (id: string) => {
         if (!confirm("Planı silmek istediğinize emin misiniz?")) return;
-
-        // Optimistic
-        const updated = plans.filter(p => p.id !== id);
-        setPlans(updated);
-
+        setPlans((prev) => prev.filter((p) => p.id !== id));
+        closeDrawer();
         try {
             await updateVisitPlanStatus({ id, status: "CANCELLED" });
         } catch (e) {
@@ -174,14 +309,10 @@ export default function VisitPlanningPage() {
     };
 
     const completePlan = (plan: VisitPlan) => {
-        // PERMISSION CHECK:
-        // If plan is assigned to someone else, current user cannot complete it.
         if (plan.assignedTo && plan.assignedTo !== session?.email) {
             alert(`Bu planı sadece atanan kişi (${plan.assignedTo}) tamamlayabilir.`);
             return;
         }
-
-        // Redirect to New Visit page with pre-filled data
         const params = new URLSearchParams();
         params.set("planId", plan.id);
         params.set("firma", plan.firmaAdi);
@@ -194,12 +325,20 @@ export default function VisitPlanningPage() {
             alert("Lütfen yeni tarih ve açıklama giriniz.");
             return;
         }
-
         try {
-            const res: any = await requestPlanChange({ id: changeTxId, newDate: changeDate, note: changeNote });
-            if (!res || !res.ok) throw new Error(res?.message);
-            // Optimistic update
-            setPlans(prev => prev.map(p => p.id === changeTxId ? { ...p, proposedDate: changeDate, proposedNote: changeNote } : p));
+            const res: any = await requestPlanChange({
+                id: changeTxId,
+                newDate: changeDate,
+                note: changeNote,
+            });
+            if (!res?.ok) throw new Error(res?.message);
+            setPlans((prev) =>
+                prev.map((p) =>
+                    p.id === changeTxId
+                        ? { ...p, proposedDate: changeDate, proposedNote: changeNote }
+                        : p
+                )
+            );
             setShowChangeModal(false);
             setChangeDate("");
             setChangeNote("");
@@ -210,393 +349,665 @@ export default function VisitPlanningPage() {
         }
     };
 
-    const handleResolveChange = async (plan: VisitPlan, decision: "APPROVED" | "REJECTED") => {
-        if (!confirm(`Bu talebi ${decision === "APPROVED" ? "ONAYLAMAK" : "REDDETMEK"} istediğinize emin misiniz?`)) return;
-
+    const handleResolveChange = async (
+        plan: VisitPlan,
+        decision: "APPROVED" | "REJECTED"
+    ) => {
+        if (
+            !confirm(
+                `Bu talebi ${decision === "APPROVED" ? "ONAYLAMAK" : "REDDETMEK"} istediğinize emin misiniz?`
+            )
+        )
+            return;
         try {
             const res: any = await resolvePlanChange({ id: plan.id, decision });
-            if (!res || !res.ok) throw new Error(res?.message);
-
-            setPlans(prev => prev.map(p => {
-                if (p.id !== plan.id) return p;
-                if (decision === "APPROVED") {
-                    return {
-                        ...p,
-                        plannedDate: p.proposedDate!,
-                        notes: p.notes + ` [Değişiklik: ${p.proposedNote}]`,
-                        proposedDate: undefined,
-                        proposedNote: undefined
-                    };
-                } else {
+            if (!res?.ok) throw new Error(res?.message);
+            setPlans((prev) =>
+                prev.map((p) => {
+                    if (p.id !== plan.id) return p;
+                    if (decision === "APPROVED") {
+                        return {
+                            ...p,
+                            plannedDate: p.proposedDate!,
+                            notes: p.notes + ` [Değişiklik: ${p.proposedNote}]`,
+                            proposedDate: undefined,
+                            proposedNote: undefined,
+                        };
+                    }
                     return { ...p, proposedDate: undefined, proposedNote: undefined };
-                }
-            }));
+                })
+            );
         } catch (e: any) {
             alert("İşlem hatası: " + e.message);
         }
     };
 
-    // Calendar Helpers
-    const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
-    const firstDayOfMonth = (year: number, month: number) => {
-        let day = new Date(year, month, 1).getDay();
-        return day === 0 ? 6 : day - 1; // Mon=0
-    };
-
-    const monthName = new Intl.DateTimeFormat('tr-TR', { month: 'long' }).format(currentDate);
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-
-    const renderCalendar = () => {
-        const totalDays = daysInMonth(year, month);
-        const startDay = firstDayOfMonth(year, month);
-
-        const grid = [];
-
-        // Add weekday headers first (7 cells)
-        ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"].forEach(day => {
-            grid.push(
-                <div key={`header-${day}`} className="calendar-weekday-header">
-                    {day}
+    // ── Render ────────────────────────────────────────────────────────────────
+    if (loading) {
+        return (
+            <div className="page-container" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh" }}>
+                <div style={{ textAlign: "center" }}>
+                    <div className="fc-spinner" />
+                    <p style={{ marginTop: "1rem", color: "#6b7280" }}>Yükleniyor...</p>
                 </div>
-            );
-        });
-
-        // Add empty cells before month starts
-        for (let i = 0; i < startDay; i++) {
-            grid.push(<div key={`empty-${i}`} className="calendar-cell calendar-cell-empty"></div>);
-        }
-
-        // Add day cells
-        for (let d = 1; d <= totalDays; d++) {
-            const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-            const isToday = new Date().toISOString().slice(0, 10) === dateStr;
-            const dayPlans = plans.filter(p => p.plannedDate === dateStr && p.status !== "CANCELLED");
-
-            // Limit shown items on mobile
-            const displayPlans = isMobile ? dayPlans.slice(0, 1) : dayPlans.slice(0, 3);
-            const hiddenCount = dayPlans.length - displayPlans.length;
-
-            grid.push(
-                <div
-                    key={`day-${d}`}
-                    onClick={() => {
-                        if (isMobile) {
-                            setDayDetails({ date: dateStr, plans: dayPlans });
-                        } else {
-                            setFormDate(dateStr);
-                            setShowModal(true);
-                        }
-                    }}
-                    className={`calendar-cell ${isToday ? 'calendar-cell-today' : ''}`}
-                >
-                    <div className="calendar-cell-header">
-                        <span className="calendar-day-number">{d}</span>
-                        {isToday && <span className="today-indicator">●</span>}
-                    </div>
-
-                    <div className="calendar-cell-content">
-                        {displayPlans.map(p => {
-                            const isAssigned = p.creatorId && p.assignedTo && p.creatorId !== p.assignedTo;
-                            return (
-                                <div
-                                    key={p.id}
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (isMobile) {
-                                            setDayDetails({ date: dateStr, plans: dayPlans });
-                                        } else {
-                                            completePlan(p);
-                                        }
-                                    }}
-                                    className={`plan-indicator ${p.status === "COMPLETED" ? "completed" : isAssigned ? "assigned" : "pending"}`}
-                                    title={p.firmaAdi}
-                                >
-                                    {!isMobile && (
-                                        <>
-                                            {isAssigned && <span className="assigned-badge">A</span>}
-                                            {p.status === "COMPLETED" && "✅"} {p.firmaAdi}
-                                        </>
-                                    )}
-                                </div>
-                            );
-                        })}
-                        {hiddenCount > 0 && (
-                            <div className="more-events">
-                                +{hiddenCount}
-                            </div>
-                        )}
-                    </div>
-
-                    {!isMobile && dayPlans.length === 0 && <div className="add-btn-overlay">+</div>}
-                </div>
-            );
-        }
-        return grid;
-    };
+            </div>
+        );
+    }
 
     return (
-        <div className="page-container">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "2rem", flexWrap: "wrap", gap: "1rem" }}>
+        <div className="page-container vp-root">
+            {/* ── Header ── */}
+            <div className="vp-header">
                 <div>
-                    <button onClick={() => router.back()} className="tibcon-btn tibcon-btn-outline" style={{ marginBottom: "0.5rem", fontSize: "0.8rem", padding: "4px 8px" }}>
+                    <button
+                        onClick={() => router.back()}
+                        className="tibcon-btn tibcon-btn-outline"
+                        style={{ marginBottom: "0.5rem", fontSize: "0.8rem", padding: "4px 10px" }}
+                    >
                         ← Geri Dön
                     </button>
-                    <h1 className="title-xl outfit">Ziyaret <span style={{ color: "var(--tibcon-red)" }}>Planlama</span></h1>
-                    <p className="text-muted">Müşteri ziyaretlerinizi aylık olarak planlayın ve takip edin.</p>
+                    <h1 className="title-xl outfit">
+                        Ziyaret <span style={{ color: "var(--tibcon-red)" }}>Planlama</span>
+                    </h1>
+                    <p className="text-muted" style={{ marginTop: "0.25rem" }}>
+                        Müşteri ziyaretlerinizi planlayın ve takip edin.
+                    </p>
                 </div>
-
-                {/* Month Navigation - Centered and touch-friendly */}
-                <div className="month-navigation">
-                    <button
-                        title="Önceki Ay"
-                        onClick={() => setCurrentDate(new Date(year, month - 1, 1))}
-                        className="tibcon-btn tibcon-btn-outline month-nav-btn"
-                    >
-                        ◀
-                    </button>
-                    <h2 className="outfit month-title">{monthName} {year}</h2>
-                    <button
-                        title="Sonraki Ay"
-                        onClick={() => setCurrentDate(new Date(year, month + 1, 1))}
-                        className="tibcon-btn tibcon-btn-outline month-nav-btn"
-                    >
-                        ▶
-                    </button>
-                </div>
+                <button
+                    className="tibcon-btn tibcon-btn-primary"
+                    onClick={() => {
+                        setFormDate(selectedDate);
+                        setShowModal(true);
+                    }}
+                    style={{ alignSelf: "flex-end", gap: "0.5rem" }}
+                >
+                    <span style={{ fontSize: "1.2rem", fontWeight: 700 }}>+</span> Ziyaret Ekle
+                </button>
             </div>
 
-            <div className="planning-grid">
-                {/* CALENDAR */}
-                <div className="calendar-wrapper">
-                    <div className="calendar-grid-unified">
-                        {renderCalendar()}
-                    </div>
+            {/* ── Main Grid ── */}
+            <div className="vp-grid">
+                {/* ── Calendar ── */}
+                <div className="vp-calendar-card">
+                    <FullCalendar
+                        plugins={[dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin]}
+                        initialView="dayGridMonth"
+                        locale="tr"
+                        firstDay={1}
+                        headerToolbar={{
+                            left: "prev,next today",
+                            center: "title",
+                            right: "dayGridMonth,timeGridWeek,listWeek",
+                        }}
+                        buttonText={{
+                            today: "Bugün",
+                            month: "Ay",
+                            week: "Hafta",
+                            list: "Liste",
+                        }}
+                        events={filteredEvents}
+                        editable={true}
+                        droppable={true}
+                        dayMaxEvents={3}
+                        moreLinkText={(n) => `+${n} daha`}
+                        eventClick={handleEventClick}
+                        dateClick={handleDateClick}
+                        eventDrop={handleEventDrop}
+                        height="auto"
+                        eventDisplay="block"
+                        eventTimeFormat={{ hour: "2-digit", minute: "2-digit", hour12: false }}
+                        dayHeaderFormat={{ weekday: "short" }}
+                        titleFormat={{ year: "numeric", month: "long" }}
+                        eventContent={(arg) => {
+                            const plan = arg.event.extendedProps.plan as VisitPlan;
+                            const cfg = STATUS_CONFIG[plan?.status] || STATUS_CONFIG.PENDING;
+                            return (
+                                <div
+                                    style={{
+                                        background: cfg.bg,
+                                        color: cfg.text,
+                                        borderLeft: `3px solid ${cfg.border}`,
+                                        padding: "2px 5px",
+                                        borderRadius: "4px",
+                                        fontSize: "0.72rem",
+                                        fontWeight: 600,
+                                        overflow: "hidden",
+                                        textOverflow: "ellipsis",
+                                        whiteSpace: "nowrap",
+                                        cursor: "pointer",
+                                        width: "100%",
+                                    }}
+                                    title={arg.event.title}
+                                >
+                                    {arg.event.title}
+                                </div>
+                            );
+                        }}
+                    />
                 </div>
 
-                {/* SIDEBAR */}
-                <div className="premium-card sidebar-card">
-                    <h3 className="outfit" style={{ marginTop: 0 }}>Yaklaşan Planlar</h3>
-                    <div className="sidebar-list">
-                        {plans.filter(p => p.status === "PENDING").length === 0 ? (
-                            <div style={{ textAlign: "center", color: "#999", padding: "2rem" }}>
-                                Planlanmış ziyaretiniz yok.
-                            </div>
-                        ) : plans.filter(p => p.status === "PENDING").sort((a, b) => a.plannedDate.localeCompare(b.plannedDate)).map(p => {
-                            const isAssigned = p.creatorId && p.assignedTo && p.creatorId !== p.assignedTo;
-                            const assignerName = users.find(u => u.email === p.creatorId)?.displayName || p.creatorId;
+                {/* ── Agenda Sidebar ── */}
+                <div className="vp-sidebar">
+                    {/* Search */}
+                    <div className="vp-search-wrap">
+                        <span className="vp-search-icon">🔍</span>
+                        <input
+                            className="vp-search-input"
+                            placeholder="Firma veya şehir ara..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                        />
+                    </div>
 
+                    {/* Status Filters */}
+                    <div className="vp-filters">
+                        {(Object.keys(STATUS_CONFIG) as VisitStatus[]).map((s) => {
+                            const cfg = STATUS_CONFIG[s];
+                            const active = activeFilters.has(s);
                             return (
-                                <div key={p.id} className="plan-item">
-                                    <div style={{ fontSize: "0.75rem", color: "#888", fontWeight: 600 }}>{new Date(p.plannedDate).toLocaleDateString("tr-TR")}</div>
-                                    <div style={{ fontWeight: 700, color: "var(--tibcon-anth)", margin: "4px 0" }}>{p.firmaAdi}</div>
-                                    <div style={{ fontSize: "0.85rem", color: "#666" }}>{p.sehir} / {p.ilce}</div>
-                                    {p.notes && <div style={{ fontSize: "0.8rem", color: "#999", marginTop: "4px", fontStyle: "italic" }}>"{p.notes}"</div>}
-                                    {isAssigned && (
-                                        <div style={{ fontSize: "0.75rem", color: "#3b82f6", marginTop: "4px", fontWeight: 500 }}>
-                                            📅 {assignerName} tarafından {new Date(p.createdAt).toLocaleDateString("tr-TR")} tarihinde atandı.
-                                        </div>
-                                    )}
-
-                                    <div style={{ display: "flex", gap: "8px", marginTop: "12px", flexDirection: "column" }}>
-                                        {/* Status / Request Info for Managers */}
-                                        {(session?.role === "region_manager" || session?.role === "admin") && p.proposedDate && (
-                                            <div style={{ background: "#fffbeb", border: "1px solid #fcd34d", padding: "8px", borderRadius: "8px", fontSize: "0.8rem" }}>
-                                                <div style={{ fontWeight: 700, color: "#b45309", marginBottom: "4px" }}>⚠️ DEĞİŞİKLİK TALEBİ</div>
-                                                <div><strong>Yeni Tarih:</strong> {new Date(p.proposedDate).toLocaleDateString("tr-TR")}</div>
-                                                <div><strong>Sebep:</strong> {p.proposedNote}</div>
-                                                <div style={{ display: "flex", gap: "5px", marginTop: "8px" }}>
-                                                    <button onClick={() => handleResolveChange(p, "APPROVED")} style={{ flex: 1, background: "#10b981", color: "white", border: "none", borderRadius: "4px", padding: "4px", cursor: "pointer" }}>Onayla ve Değiştir</button>
-                                                    <button onClick={() => handleResolveChange(p, "REJECTED")} style={{ flex: 1, background: "#ef4444", color: "white", border: "none", borderRadius: "4px", padding: "4px", cursor: "pointer" }}>Reddet</button>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* Pending Request Indicator for Reps */}
-                                        {p.proposedDate && session?.role !== "region_manager" && session?.role !== "admin" && (
-                                            <div style={{ background: "#eff6ff", color: "#1e40af", padding: "6px", borderRadius: "6px", fontSize: "0.8rem", textAlign: "center", border: "1px solid #dbeafe" }}>
-                                                ⏳ Tarih değişikliği onayı bekleniyor ({new Date(p.proposedDate).toLocaleDateString("tr-TR")})
-                                            </div>
-                                        )}
-
-                                        <div style={{ display: "flex", gap: "8px" }}>
-                                            {(!p.assignedTo || p.assignedTo === session?.email) ? (
-                                                <button
-                                                    onClick={() => completePlan(p)}
-                                                    style={{ flex: 1, padding: "6px", borderRadius: "6px", border: "none", background: "var(--tibcon-red)", color: "white", fontSize: "0.8rem", fontWeight: 600, cursor: "pointer" }}
-                                                >
-                                                    Giriş Yap
-                                                </button>
-                                            ) : (
-                                                <div style={{ flex: 1, padding: "6px", borderRadius: "6px", border: "1px solid #ddd", background: "#f1f3f5", color: "#999", fontSize: "0.8rem", textAlign: "center" }}>
-                                                    🔒 {p.assignedTo} bekliyor
-                                                </div>
-                                            )}
-
-                                            {/* Delete or Request Change */}
-                                            {(!isAssigned && p.status === "PENDING") ? (
-                                                <button
-                                                    onClick={() => deletePlan(p.id)}
-                                                    style={{ padding: "6px", borderRadius: "6px", border: "1px solid #eee", background: "white", color: "#999", cursor: "pointer" }}
-                                                    title="Planı Sil"
-                                                >
-                                                    🗑️
-                                                </button>
-                                            ) : (p.status === "PENDING" && !p.proposedDate && session?.role !== "region_manager" && session?.role !== "admin") ? (
-                                                <>
-                                                    {/* Allow Delete IF Enabled in Settings */}
-                                                    {(settings.allowRepDeletePlan === true || settings.allowRepDeletePlan === "true") && (
-                                                        <button
-                                                            onClick={() => deletePlan(p.id)}
-                                                            style={{ padding: "6px", borderRadius: "6px", border: "1px solid #ef4444", background: "white", color: "#ef4444", cursor: "pointer", marginRight: "5px" }}
-                                                            title="Planı Sil (Admin İzni)"
-                                                        >
-                                                            🗑️
-                                                        </button>
-                                                    )}
-
-                                                    <button
-                                                        onClick={() => {
-                                                            setChangeTxId(p.id);
-                                                            setChangeDate("");
-                                                            setChangeNote("");
-                                                            setShowChangeModal(true);
-                                                        }}
-                                                        style={{ padding: "6px 10px", borderRadius: "6px", border: "1px solid #3b82f6", background: "white", color: "#3b82f6", cursor: "pointer", fontSize: "0.8rem", whiteSpace: "nowrap" }}
-                                                        title="Tarih Değişikliği Talep Et"
-                                                    >
-                                                        📅 Değişiklik Talep Et
-                                                    </button>
-                                                </>
-                                            ) : null}
-                                        </div>
-                                    </div>
-                                </div>
+                                <button
+                                    key={s}
+                                    onClick={() => toggleFilter(s)}
+                                    style={{
+                                        background: active ? cfg.bg : "#f3f4f6",
+                                        color: active ? cfg.text : "#9ca3af",
+                                        border: `1px solid ${active ? cfg.border : "transparent"}`,
+                                        borderRadius: "20px",
+                                        padding: "4px 10px",
+                                        fontSize: "0.72rem",
+                                        fontWeight: 600,
+                                        cursor: "pointer",
+                                        transition: "all 0.2s",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: "4px",
+                                    }}
+                                >
+                                    <span
+                                        style={{
+                                            width: 7,
+                                            height: 7,
+                                            borderRadius: "50%",
+                                            background: active ? cfg.dot : "#d1d5db",
+                                            display: "inline-block",
+                                        }}
+                                    />
+                                    {cfg.label}
+                                </button>
                             );
                         })}
                     </div>
+
+                    {/* Selected Date Header */}
+                    <div className="vp-agenda-date">
+                        <span className="vp-agenda-date-label">
+                            {new Date(selectedDate + "T00:00:00").toLocaleDateString("tr-TR", {
+                                weekday: "long",
+                                day: "numeric",
+                                month: "long",
+                                year: "numeric",
+                            })}
+                        </span>
+                        <span className="vp-agenda-count">{agendaPlans.length} ziyaret</span>
+                    </div>
+
+                    {/* Agenda List */}
+                    <div className="vp-agenda-list">
+                        {agendaPlans.length === 0 ? (
+                            <div className="vp-empty">
+                                <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>📅</div>
+                                <div>Bu tarihte ziyaret yok</div>
+                                <button
+                                    className="tibcon-btn tibcon-btn-primary"
+                                    style={{ marginTop: "1rem", fontSize: "0.85rem", padding: "8px 16px" }}
+                                    onClick={() => {
+                                        setFormDate(selectedDate);
+                                        setShowModal(true);
+                                    }}
+                                >
+                                    + Ziyaret Ekle
+                                </button>
+                            </div>
+                        ) : (
+                            agendaPlans.map((p) => {
+                                const cfg = STATUS_CONFIG[p.status];
+                                return (
+                                    <div
+                                        key={p.id}
+                                        className="vp-agenda-card"
+                                        onClick={() => openDrawer(p)}
+                                        style={{ borderLeft: `4px solid ${cfg.border}` }}
+                                    >
+                                        <div className="vp-agenda-card-top">
+                                            <div className="vp-agenda-firma">{p.firmaAdi}</div>
+                                            <span
+                                                style={{
+                                                    background: cfg.bg,
+                                                    color: cfg.text,
+                                                    borderRadius: "12px",
+                                                    padding: "2px 8px",
+                                                    fontSize: "0.68rem",
+                                                    fontWeight: 700,
+                                                    whiteSpace: "nowrap",
+                                                }}
+                                            >
+                                                {cfg.label}
+                                            </span>
+                                        </div>
+                                        <div className="vp-agenda-meta">
+                                            📍 {p.sehir}{p.ilce ? ` / ${p.ilce}` : ""}
+                                        </div>
+                                        {p.notes && (
+                                            <div className="vp-agenda-notes">{p.notes}</div>
+                                        )}
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
                 </div>
             </div>
 
-            {/* CHANGE REQUEST MODAL */}
+            {/* ── Drawer ── */}
+            {drawerPlan && (
+                <>
+                    <div
+                        className={`vp-drawer-overlay ${drawerOpen ? "open" : ""}`}
+                        onClick={closeDrawer}
+                    />
+                    <div className={`vp-drawer ${drawerOpen ? "open" : ""}`}>
+                        <div className="vp-drawer-header">
+                            <div>
+                                <div
+                                    style={{
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: "6px",
+                                        background: STATUS_CONFIG[drawerPlan.status].bg,
+                                        color: STATUS_CONFIG[drawerPlan.status].text,
+                                        borderRadius: "20px",
+                                        padding: "3px 10px",
+                                        fontSize: "0.75rem",
+                                        fontWeight: 700,
+                                        marginBottom: "0.5rem",
+                                    }}
+                                >
+                                    <span
+                                        style={{
+                                            width: 8,
+                                            height: 8,
+                                            borderRadius: "50%",
+                                            background: STATUS_CONFIG[drawerPlan.status].dot,
+                                        }}
+                                    />
+                                    {STATUS_CONFIG[drawerPlan.status].label}
+                                </div>
+                                <h2 className="outfit" style={{ margin: 0, fontSize: "1.3rem" }}>
+                                    {drawerPlan.firmaAdi}
+                                </h2>
+                            </div>
+                            <button className="vp-drawer-close" onClick={closeDrawer}>
+                                ✕
+                            </button>
+                        </div>
+
+                        <div className="vp-drawer-body">
+                            <div className="vp-detail-row">
+                                <span className="vp-detail-label">📅 Tarih</span>
+                                <span className="vp-detail-value">
+                                    {new Date(drawerPlan.plannedDate + "T00:00:00").toLocaleDateString("tr-TR", {
+                                        weekday: "long",
+                                        day: "numeric",
+                                        month: "long",
+                                        year: "numeric",
+                                    })}
+                                </span>
+                            </div>
+                            <div className="vp-detail-row">
+                                <span className="vp-detail-label">📍 Konum</span>
+                                <span className="vp-detail-value">
+                                    {drawerPlan.sehir}
+                                    {drawerPlan.ilce ? ` / ${drawerPlan.ilce}` : ""}
+                                </span>
+                            </div>
+                            {drawerPlan.assignedTo && (
+                                <div className="vp-detail-row">
+                                    <span className="vp-detail-label">👤 Atanan</span>
+                                    <span className="vp-detail-value">
+                                        {users.find((u) => u.email === drawerPlan.assignedTo)?.displayName ||
+                                            drawerPlan.assignedTo}
+                                    </span>
+                                </div>
+                            )}
+                            {drawerPlan.assignedByName && (
+                                <div className="vp-detail-row">
+                                    <span className="vp-detail-label">🏷️ Atayan</span>
+                                    <span className="vp-detail-value">{drawerPlan.assignedByName}</span>
+                                </div>
+                            )}
+                            {drawerPlan.notes && (
+                                <div className="vp-detail-notes">
+                                    <div className="vp-detail-label" style={{ marginBottom: "0.5rem" }}>
+                                        📝 Notlar
+                                    </div>
+                                    <div className="vp-detail-notes-text">{drawerPlan.notes}</div>
+                                </div>
+                            )}
+
+                            {/* Pending Change Request */}
+                            {drawerPlan.proposedDate && (
+                                <div className="vp-change-request">
+                                    <div style={{ fontWeight: 700, color: "#b45309", marginBottom: "6px" }}>
+                                        ⚠️ Değişiklik Talebi
+                                    </div>
+                                    <div style={{ fontSize: "0.85rem" }}>
+                                        <strong>Yeni Tarih:</strong>{" "}
+                                        {new Date(drawerPlan.proposedDate + "T00:00:00").toLocaleDateString("tr-TR")}
+                                    </div>
+                                    <div style={{ fontSize: "0.85rem" }}>
+                                        <strong>Sebep:</strong> {drawerPlan.proposedNote}
+                                    </div>
+                                    {(session?.role === "region_manager" || session?.role === "admin") && (
+                                        <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+                                            <button
+                                                onClick={() => handleResolveChange(drawerPlan, "APPROVED")}
+                                                style={{
+                                                    flex: 1,
+                                                    background: "#10b981",
+                                                    color: "white",
+                                                    border: "none",
+                                                    borderRadius: "8px",
+                                                    padding: "8px",
+                                                    cursor: "pointer",
+                                                    fontWeight: 600,
+                                                }}
+                                            >
+                                                ✓ Onayla
+                                            </button>
+                                            <button
+                                                onClick={() => handleResolveChange(drawerPlan, "REJECTED")}
+                                                style={{
+                                                    flex: 1,
+                                                    background: "#ef4444",
+                                                    color: "white",
+                                                    border: "none",
+                                                    borderRadius: "8px",
+                                                    padding: "8px",
+                                                    cursor: "pointer",
+                                                    fontWeight: 600,
+                                                }}
+                                            >
+                                                ✗ Reddet
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Drawer Actions */}
+                        <div className="vp-drawer-actions">
+                            {drawerPlan.status === "PENDING" &&
+                                (!drawerPlan.assignedTo || drawerPlan.assignedTo === session?.email) && (
+                                    <button
+                                        className="tibcon-btn tibcon-btn-primary"
+                                        style={{ flex: 1 }}
+                                        onClick={() => {
+                                            closeDrawer();
+                                            completePlan(drawerPlan);
+                                        }}
+                                    >
+                                        ✓ Ziyaret Giriş Yap
+                                    </button>
+                                )}
+
+                            {drawerPlan.status === "PENDING" &&
+                                drawerPlan.assignedTo &&
+                                drawerPlan.assignedTo !== session?.email &&
+                                !drawerPlan.proposedDate &&
+                                session?.role !== "region_manager" &&
+                                session?.role !== "admin" && (
+                                    <button
+                                        className="tibcon-btn tibcon-btn-outline"
+                                        style={{ flex: 1 }}
+                                        onClick={() => {
+                                            setChangeTxId(drawerPlan.id);
+                                            setChangeDate("");
+                                            setChangeNote("");
+                                            setShowChangeModal(true);
+                                        }}
+                                    >
+                                        📅 Değişiklik Talep Et
+                                    </button>
+                                )}
+
+                            {(session?.role === "region_manager" ||
+                                session?.role === "admin" ||
+                                (settings.allowRepDeletePlan === true ||
+                                    settings.allowRepDeletePlan === "true")) && (
+                                    <button
+                                        className="tibcon-btn tibcon-btn-outline"
+                                        style={{ color: "#ef4444", borderColor: "#ef4444" }}
+                                        onClick={() => deletePlan(drawerPlan.id)}
+                                    >
+                                        🗑️
+                                    </button>
+                                )}
+                        </div>
+                    </div>
+                </>
+            )}
+
+            {/* ── Change Request Modal ── */}
             {showChangeModal && (
                 <div className="modal-overlay" onClick={() => setShowChangeModal(false)}>
-                    <div className="modal-content" onClick={e => e.stopPropagation()}>
-                        <h3 className="outfit" style={{ marginTop: 0 }}>Plan Değişiklik Talebi</h3>
-
+                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="outfit" style={{ marginTop: 0 }}>
+                            Plan Değişiklik Talebi
+                        </h3>
                         <div style={{ marginBottom: "1rem" }}>
-                            <label style={{ display: "block", fontSize: "0.9rem", fontWeight: 600, marginBottom: "0.5rem" }}>Talep Edilen Yeni Tarih</label>
+                            <label className="vp-label">Talep Edilen Yeni Tarih</label>
                             <input
                                 type="date"
                                 value={changeDate}
-                                onChange={e => setChangeDate(e.target.value)}
-                                className="premium-input"
+                                onChange={(e) => setChangeDate(e.target.value)}
+                                className="vp-input"
                             />
                         </div>
-
                         <div style={{ marginBottom: "1.5rem" }}>
-                            <label style={{ display: "block", fontSize: "0.9rem", fontWeight: 600, marginBottom: "0.5rem" }}>Değişiklik Sebebi</label>
+                            <label className="vp-label">Değişiklik Sebebi</label>
                             <textarea
                                 value={changeNote}
-                                onChange={e => setChangeNote(e.target.value)}
-                                className="premium-input"
+                                onChange={(e) => setChangeNote(e.target.value)}
+                                className="vp-input"
                                 rows={3}
                                 placeholder="Neden tarih değiştirmek istiyorsunuz?"
                             />
                         </div>
-
                         <div style={{ display: "flex", gap: "1rem" }}>
-                            <button onClick={() => setShowChangeModal(false)} className="tibcon-btn tibcon-btn-outline" style={{ flex: 1 }}>İptal</button>
-                            <button onClick={handleRequestChange} className="tibcon-btn tibcon-btn-primary" style={{ flex: 1 }}>Talebi Gönder</button>
+                            <button
+                                onClick={() => setShowChangeModal(false)}
+                                className="tibcon-btn tibcon-btn-outline"
+                                style={{ flex: 1 }}
+                            >
+                                İptal
+                            </button>
+                            <button
+                                onClick={handleRequestChange}
+                                className="tibcon-btn tibcon-btn-primary"
+                                style={{ flex: 1 }}
+                            >
+                                Talebi Gönder
+                            </button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* NEW PLAN MODAL */}
+            {/* ── New Plan Modal ── */}
             {showModal && (
                 <div className="modal-overlay" onClick={() => setShowModal(false)}>
-                    <div className="modal-content" onClick={e => e.stopPropagation()}>
-                        <h2 className="outfit" style={{ marginTop: 0 }}>Yeni Ziyaret Planla</h2>
+                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                        <h2 className="outfit" style={{ marginTop: 0 }}>
+                            Yeni Ziyaret Planla
+                        </h2>
 
                         <div style={{ marginBottom: "1rem" }}>
-                            <label style={{ display: "block", fontSize: "0.9rem", fontWeight: 600, marginBottom: "0.5rem" }}>Ziyaret Tarihi</label>
+                            <label className="vp-label">Ziyaret Tarihi</label>
                             <input
                                 type="date"
                                 value={formDate}
-                                onChange={e => setFormDate(e.target.value)}
-                                className="premium-input"
+                                onChange={(e) => setFormDate(e.target.value)}
+                                className="vp-input"
                             />
                         </div>
 
-                        {/* Manager Selection */}
                         {(session?.role === "region_manager" || session?.role === "admin") && (
                             <div style={{ marginBottom: "1rem" }}>
-                                <label style={{ display: "block", fontSize: "0.9rem", fontWeight: 600, marginBottom: "0.5rem" }}>
-                                    Atanacak Personel <span style={{ color: "var(--tibcon-red)", fontSize: "0.8rem" }}>(Yönetici)</span>
+                                <label className="vp-label">
+                                    Atanacak Personel{" "}
+                                    <span style={{ color: "var(--tibcon-red)", fontSize: "0.8rem" }}>
+                                        (Yönetici)
+                                    </span>
                                 </label>
                                 <select
-                                    className="premium-input"
+                                    className="vp-input"
                                     value={selectedRep}
-                                    onChange={e => setSelectedRep(e.target.value)}
+                                    onChange={(e) => setSelectedRep(e.target.value)}
                                 >
-                                    <option value={session?.email}>{session?.displayName} (Kendim)</option>
-                                    {users.filter(u => {
-                                        if (session.role === "admin") return true;
-                                        const repRegion = (u.region || "").trim().toLowerCase();
-                                        const managerRegions = (session.region || "").split(",").map((r: string) => r.trim().toLowerCase());
-                                        // If user has mult regions (unlikely for rep but possible), check overlap
-                                        // Usually rep has 1 region.
-                                        return managerRegions.includes(repRegion) || managerRegions.some((mr: string) => repRegion.includes(mr));
-                                    }).filter(u => u.email !== session?.email).map(u => (
-                                        <option key={u.id || u.email} value={u.email}>
-                                            {u.displayName || u.email}
-                                        </option>
-                                    ))}
+                                    <option value={session?.email}>
+                                        {session?.displayName} (Kendim)
+                                    </option>
+                                    {users
+                                        .filter((u) => {
+                                            if (session.role === "admin") return true;
+                                            const repRegion = (u.region || "").trim().toLowerCase();
+                                            const managerRegions = (session.region || "")
+                                                .split(",")
+                                                .map((r: string) => r.trim().toLowerCase());
+                                            return (
+                                                managerRegions.includes(repRegion) ||
+                                                managerRegions.some((mr: string) => repRegion.includes(mr))
+                                            );
+                                        })
+                                        .filter((u) => u.email !== session?.email)
+                                        .map((u) => (
+                                            <option key={u.id || u.email} value={u.email}>
+                                                {u.displayName || u.email}
+                                            </option>
+                                        ))}
                                 </select>
                             </div>
                         )}
 
                         <div style={{ marginBottom: "1rem", position: "relative" }}>
-                            <label style={{ display: "block", fontSize: "0.9rem", fontWeight: 600, marginBottom: "0.5rem" }}>Firma Seçimi</label>
+                            <label className="vp-label">Firma Seçimi</label>
                             {selectedPoint ? (
-                                <div style={{
-                                    padding: "10px", background: "rgba(227, 6, 19, 0.1)", borderRadius: "8px",
-                                    display: "flex", justifyContent: "space-between", alignItems: "center", color: "var(--tibcon-red)", fontWeight: 700
-                                }}>
+                                <div
+                                    style={{
+                                        padding: "10px",
+                                        background: "rgba(227,6,19,0.08)",
+                                        borderRadius: "10px",
+                                        display: "flex",
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        color: "var(--tibcon-red)",
+                                        fontWeight: 700,
+                                        border: "1px solid rgba(227,6,19,0.2)",
+                                    }}
+                                >
                                     {selectedPoint.FirmaAdi || selectedPoint["Firma Adı"]}
-                                    <button onClick={() => { setSelectedPoint(null); setSearchFirm(""); }} style={{ border: "none", background: "none", fontSize: "1.2rem", cursor: "pointer", color: "var(--tibcon-red)" }}>×</button>
+                                    <button
+                                        onClick={() => {
+                                            setSelectedPoint(null);
+                                            setSearchFirm("");
+                                        }}
+                                        style={{
+                                            border: "none",
+                                            background: "none",
+                                            fontSize: "1.2rem",
+                                            cursor: "pointer",
+                                            color: "var(--tibcon-red)",
+                                        }}
+                                    >
+                                        ×
+                                    </button>
                                 </div>
                             ) : (
                                 <>
                                     <input
                                         placeholder="Firma adı ara..."
                                         value={searchFirm}
-                                        onChange={e => { setSearchFirm(e.target.value); setShowDropdown(true); }}
+                                        onChange={(e) => {
+                                            setSearchFirm(e.target.value);
+                                            setShowDropdown(true);
+                                        }}
                                         onFocus={() => setShowDropdown(true)}
-                                        className="premium-input"
+                                        className="vp-input"
                                     />
                                     {showDropdown && searchFirm && (
-                                        <div style={{
-                                            position: "absolute", top: "100%", left: 0, right: 0, background: "white",
-                                            border: "1px solid #eee", borderRadius: "8px", boxShadow: "0 10px 20px rgba(0,0,0,0.1)",
-                                            maxHeight: "200px", overflowY: "auto", zIndex: 10
-                                        }}>
-                                            {filteredPoints.length > 0 ? filteredPoints.map((p, i) => (
+                                        <div
+                                            style={{
+                                                position: "absolute",
+                                                top: "100%",
+                                                left: 0,
+                                                right: 0,
+                                                background: "white",
+                                                border: "1px solid #e5e7eb",
+                                                borderRadius: "10px",
+                                                boxShadow: "0 10px 25px rgba(0,0,0,0.12)",
+                                                maxHeight: "200px",
+                                                overflowY: "auto",
+                                                zIndex: 10,
+                                            }}
+                                        >
+                                            {filteredSalesPoints.length > 0 ? (
+                                                filteredSalesPoints.map((p, i) => (
+                                                    <div
+                                                        key={i}
+                                                        onClick={() => {
+                                                            setSelectedPoint(p);
+                                                            setShowDropdown(false);
+                                                        }}
+                                                        style={{
+                                                            padding: "10px 14px",
+                                                            borderBottom: "1px solid #f3f4f6",
+                                                            cursor: "pointer",
+                                                        }}
+                                                        onMouseEnter={(e) =>
+                                                            (e.currentTarget.style.background = "#f9fafb")
+                                                        }
+                                                        onMouseLeave={(e) =>
+                                                            (e.currentTarget.style.background = "white")
+                                                        }
+                                                    >
+                                                        <div style={{ fontWeight: 700 }}>
+                                                            {p.FirmaAdi || p["Firma Adı"]}
+                                                        </div>
+                                                        <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>
+                                                            {p.Sehir || p["Şehir"]} / {p.ilce || p["İlçe"]}
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            ) : (
                                                 <div
-                                                    key={i}
-                                                    onClick={() => { setSelectedPoint(p); setShowDropdown(false); }}
-                                                    style={{ padding: "10px", borderBottom: "1px solid #f0f0f0", cursor: "pointer" }}
-                                                    onMouseEnter={e => e.currentTarget.style.background = "#f9f9f9"}
-                                                    onMouseLeave={e => e.currentTarget.style.background = "white"}
+                                                    style={{
+                                                        padding: "1rem",
+                                                        fontSize: "0.9rem",
+                                                        color: "#6c757d",
+                                                        textAlign: "center",
+                                                    }}
                                                 >
-                                                    <div style={{ fontWeight: 700 }}>{p.FirmaAdi || p["Firma Adı"]}</div>
-                                                    <div style={{ fontSize: "0.8rem", color: "#666" }}>{p.Sehir || p["Şehir"]} / {p.ilce || p["İlçe"]}</div>
-                                                </div>
-                                            )) : (
-                                                <div style={{ padding: "1rem", fontSize: "0.9rem", color: "#6c757d", textAlign: "center" }}>
-                                                    Sonuç bulunamadı.<br />
-                                                    <a href="/visits/points/new" style={{ color: "var(--tibcon-red)", fontWeight: 700, textDecoration: "underline" }}>
+                                                    Sonuç bulunamadı.
+                                                    <br />
+                                                    <a
+                                                        href="/visits/points/new"
+                                                        style={{
+                                                            color: "var(--tibcon-red)",
+                                                            fontWeight: 700,
+                                                            textDecoration: "underline",
+                                                        }}
+                                                    >
                                                         + Yeni Firma Ekle
                                                     </a>
                                                 </div>
@@ -608,488 +1019,464 @@ export default function VisitPlanningPage() {
                         </div>
 
                         <div style={{ marginBottom: "1.5rem" }}>
-                            <label style={{ display: "block", fontSize: "0.9rem", fontWeight: 600, marginBottom: "0.5rem" }}>Plan Notları</label>
+                            <label className="vp-label">Plan Notları</label>
                             <textarea
                                 value={formNote}
-                                onChange={e => setFormNote(e.target.value)}
-                                className="premium-input"
+                                onChange={(e) => setFormNote(e.target.value)}
+                                className="vp-input"
                                 rows={3}
                                 placeholder="Ziyaret sebebi, hedefler vb..."
                             />
                         </div>
 
                         <div style={{ display: "flex", gap: "1rem" }}>
-                            <button onClick={() => setShowModal(false)} className="tibcon-btn tibcon-btn-outline" style={{ flex: 1 }}>İptal</button>
-                            <button onClick={savePlan} className="tibcon-btn tibcon-btn-primary" style={{ flex: 1 }}>Planı Kaydet</button>
+                            <button
+                                onClick={() => setShowModal(false)}
+                                className="tibcon-btn tibcon-btn-outline"
+                                style={{ flex: 1 }}
+                            >
+                                İptal
+                            </button>
+                            <button
+                                onClick={savePlan}
+                                className="tibcon-btn tibcon-btn-primary"
+                                style={{ flex: 1 }}
+                                disabled={saving}
+                            >
+                                {saving ? "Kaydediliyor..." : "Planı Kaydet"}
+                            </button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* Day Details Modal (Mobile) */}
-            {dayDetails && (
-                <div className="modal-overlay" onClick={() => setDayDetails(null)} style={{ alignItems: "flex-end" }}>
-                    <div className="modal-content" onClick={e => e.stopPropagation()} style={{
-                        borderBottomLeftRadius: 0, borderBottomRightRadius: 0, width: "100%", maxWidth: "100%",
-                        maxHeight: "80vh", animation: "slideUp 0.3s ease-out"
-                    }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", borderBottom: "1px solid #eee", paddingBottom: "10px" }}>
-                            <h3 className="outfit" style={{ margin: 0 }}>
-                                {new Date(dayDetails.date).toLocaleDateString("tr-TR", { day: 'numeric', month: 'long', weekday: 'long' })}
-                            </h3>
-                            <button onClick={() => setDayDetails(null)} style={{ border: "none", background: "none", fontSize: "1.5rem", padding: "0 8px" }}>&times;</button>
-                        </div>
+            {/* ── Scoped Styles ── */}
+            <style jsx global>{`
+        /* FullCalendar overrides */
+        .fc .fc-toolbar-title {
+          font-family: 'Outfit', sans-serif;
+          font-size: 1.2rem;
+          font-weight: 700;
+          color: #1e2124;
+        }
+        .fc .fc-button {
+          background: white !important;
+          border: 1px solid #e5e7eb !important;
+          color: #374151 !important;
+          border-radius: 8px !important;
+          font-weight: 600 !important;
+          font-size: 0.8rem !important;
+          padding: 5px 12px !important;
+          box-shadow: none !important;
+          transition: all 0.2s !important;
+        }
+        .fc .fc-button:hover {
+          background: #f3f4f6 !important;
+          border-color: #d1d5db !important;
+        }
+        .fc .fc-button-active,
+        .fc .fc-button-primary:not(:disabled).fc-button-active {
+          background: var(--tibcon-red) !important;
+          border-color: var(--tibcon-red) !important;
+          color: white !important;
+        }
+        .fc .fc-daygrid-day-number {
+          font-weight: 700;
+          color: #374151;
+          font-size: 0.85rem;
+        }
+        .fc .fc-day-today {
+          background: rgba(227, 6, 19, 0.04) !important;
+        }
+        .fc .fc-day-today .fc-daygrid-day-number {
+          background: var(--tibcon-red);
+          color: white;
+          border-radius: 50%;
+          width: 26px;
+          height: 26px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .fc .fc-col-header-cell-cushion {
+          font-weight: 700;
+          font-size: 0.8rem;
+          color: #6b7280;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .fc .fc-daygrid-more-link {
+          font-size: 0.7rem;
+          font-weight: 600;
+          color: #6b7280;
+        }
+        .fc .fc-event {
+          border: none !important;
+          border-radius: 4px !important;
+          cursor: pointer !important;
+        }
+        .fc .fc-list-event:hover td {
+          background: #f9fafb;
+        }
+        .fc .fc-list-day-cushion {
+          background: #f3f4f6 !important;
+          font-weight: 700;
+          font-size: 0.85rem;
+        }
+        .fc-theme-standard td, .fc-theme-standard th {
+          border-color: #f0f0f0 !important;
+        }
+        .fc-theme-standard .fc-scrollgrid {
+          border-color: #e5e7eb !important;
+        }
 
-                        <div style={{ marginBottom: "1.5rem", display: "flex", flexDirection: "column", gap: "10px" }}>
-                            {dayDetails.plans.length === 0 ? (
-                                <div style={{ color: "#999", textAlign: "center", padding: "1rem" }}>Bu tarihte plan bulunmuyor.</div>
-                            ) : (
-                                dayDetails.plans.map(p => (
-                                    <div key={p.id} className="plan-item" style={{ background: "#f8f9fa", border: "1px solid #eee" }}>
-                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                                            <div>
-                                                <div style={{ fontWeight: 700, color: "var(--tibcon-anth)" }}>{p.firmaAdi}</div>
-                                                <div style={{ fontSize: "0.85rem", color: "#666" }}>{p.sehir} / {p.ilce}</div>
-                                                {p.notes && <div style={{ fontSize: "0.8rem", color: "#999", fontStyle: "italic" }}>"{p.notes}"</div>}
-                                            </div>
-                                            {p.status === "COMPLETED" ? (
-                                                <span style={{ color: "green", fontSize: "1.2rem" }}>✅</span>
-                                            ) : (
-                                                <button
-                                                    onClick={() => { setDayDetails(null); completePlan(p); }}
-                                                    style={{ background: "var(--tibcon-red)", color: "white", border: "none", borderRadius: "6px", padding: "4px 8px", fontSize: "0.8rem" }}
-                                                >
-                                                    Giriş
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))
-                            )}
-                        </div>
+        /* Spinner */
+        .fc-spinner {
+          width: 40px;
+          height: 40px;
+          border: 3px solid #f3f4f6;
+          border-top-color: var(--tibcon-red);
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+          margin: 0 auto;
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
 
-                        <button
-                            onClick={() => {
-                                setFormDate(dayDetails.date);
-                                setDayDetails(null);
-                                setShowModal(true);
-                            }}
-                            className="tibcon-btn tibcon-btn-primary"
-                            style={{ width: "100%", padding: "12px", fontSize: "1rem", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}
-                        >
-                            <span style={{ fontSize: "1.2rem", fontWeight: 700 }}>+</span> Yeni Ziyaret Planla
-                        </button>
-                    </div>
-                </div>
-            )}
+        /* Layout */
+        .vp-root { }
+        .vp-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 1.5rem;
+          flex-wrap: wrap;
+          gap: 1rem;
+        }
+        .vp-grid {
+          display: grid;
+          grid-template-columns: 1fr 340px;
+          gap: 1.5rem;
+          align-items: start;
+        }
+        .vp-calendar-card {
+          background: white;
+          border-radius: 20px;
+          box-shadow: 0 4px 20px rgba(0,0,0,0.07);
+          padding: 1.25rem;
+          overflow: hidden;
+        }
+        .vp-sidebar {
+          background: white;
+          border-radius: 20px;
+          box-shadow: 0 4px 20px rgba(0,0,0,0.07);
+          padding: 1.25rem;
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+          position: sticky;
+          top: 1rem;
+          max-height: calc(100vh - 2rem);
+          overflow: hidden;
+        }
 
-            <style jsx>{`
-                @keyframes slideUp {
-                    from { transform: translateY(100%); opacity: 0; }
-                    to { transform: translateY(0); opacity: 1; }
-                }
+        /* Search */
+        .vp-search-wrap {
+          position: relative;
+          display: flex;
+          align-items: center;
+        }
+        .vp-search-icon {
+          position: absolute;
+          left: 12px;
+          font-size: 0.9rem;
+          pointer-events: none;
+        }
+        .vp-search-input {
+          width: 100%;
+          padding: 9px 12px 9px 36px;
+          border: 1px solid #e5e7eb;
+          border-radius: 10px;
+          font-size: 0.875rem;
+          outline: none;
+          transition: border-color 0.2s;
+          background: #f9fafb;
+        }
+        .vp-search-input:focus {
+          border-color: var(--tibcon-red);
+          background: white;
+        }
 
-                /* MONTH NAVIGATION */
-                .month-navigation {
-                    display: flex;
-                    align-items: center;
-                    gap: 1rem;
-                }
+        /* Filters */
+        .vp-filters {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
 
-                .month-title {
-                    margin: 0;
-                    min-width: 200px;
-                    text-align: center;
-                    font-size: 1.5rem;
-                }
+        /* Agenda */
+        .vp-agenda-date {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding-bottom: 0.75rem;
+          border-bottom: 1px solid #f0f0f0;
+        }
+        .vp-agenda-date-label {
+          font-size: 0.82rem;
+          font-weight: 700;
+          color: #374151;
+          font-family: 'Outfit', sans-serif;
+        }
+        .vp-agenda-count {
+          font-size: 0.72rem;
+          background: #f3f4f6;
+          color: #6b7280;
+          padding: 2px 8px;
+          border-radius: 20px;
+          font-weight: 600;
+        }
+        .vp-agenda-list {
+          flex: 1;
+          overflow-y: auto;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding-right: 2px;
+        }
+        .vp-agenda-list::-webkit-scrollbar { width: 4px; }
+        .vp-agenda-list::-webkit-scrollbar-track { background: transparent; }
+        .vp-agenda-list::-webkit-scrollbar-thumb { background: #e5e7eb; border-radius: 4px; }
 
-                .month-nav-btn {
-                    min-width: 44px;
-                    min-height: 44px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    font-size: 1.2rem;
-                }
+        .vp-agenda-card {
+          padding: 10px 12px;
+          border-radius: 10px;
+          border: 1px solid #f0f0f0;
+          background: #fafafa;
+          cursor: pointer;
+          transition: all 0.2s;
+          border-left-width: 4px;
+        }
+        .vp-agenda-card:hover {
+          background: white;
+          box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+          transform: translateX(2px);
+        }
+        .vp-agenda-card-top {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 8px;
+          margin-bottom: 4px;
+        }
+        .vp-agenda-firma {
+          font-weight: 700;
+          font-size: 0.875rem;
+          color: #1e2124;
+          line-height: 1.3;
+        }
+        .vp-agenda-meta {
+          font-size: 0.75rem;
+          color: #6b7280;
+          margin-top: 2px;
+        }
+        .vp-agenda-notes {
+          font-size: 0.75rem;
+          color: #9ca3af;
+          font-style: italic;
+          margin-top: 4px;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
 
-                @media (max-width: 768px) {
-                    .month-navigation {
-                        width: 100%;
-                        justify-content: center;
-                    }
+        .vp-empty {
+          text-align: center;
+          color: #9ca3af;
+          font-size: 0.875rem;
+          padding: 2rem 1rem;
+        }
 
-                    .month-title {
-                        font-size: 1.2rem;
-                        min-width: 150px;
-                    }
+        /* Drawer */
+        .vp-drawer-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0);
+          z-index: 200;
+          pointer-events: none;
+          transition: background 0.3s;
+        }
+        .vp-drawer-overlay.open {
+          background: rgba(0,0,0,0.4);
+          pointer-events: all;
+        }
+        .vp-drawer {
+          position: fixed;
+          top: 0;
+          right: 0;
+          bottom: 0;
+          width: 420px;
+          max-width: 95vw;
+          background: white;
+          box-shadow: -8px 0 40px rgba(0,0,0,0.15);
+          z-index: 201;
+          transform: translateX(100%);
+          transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          display: flex;
+          flex-direction: column;
+        }
+        .vp-drawer.open {
+          transform: translateX(0);
+        }
+        .vp-drawer-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          padding: 1.5rem;
+          border-bottom: 1px solid #f0f0f0;
+        }
+        .vp-drawer-close {
+          background: #f3f4f6;
+          border: none;
+          border-radius: 8px;
+          width: 32px;
+          height: 32px;
+          cursor: pointer;
+          font-size: 0.9rem;
+          color: #6b7280;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s;
+          flex-shrink: 0;
+        }
+        .vp-drawer-close:hover {
+          background: #e5e7eb;
+          color: #374151;
+        }
+        .vp-drawer-body {
+          flex: 1;
+          overflow-y: auto;
+          padding: 1.5rem;
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+        .vp-drawer-actions {
+          padding: 1rem 1.5rem;
+          border-top: 1px solid #f0f0f0;
+          display: flex;
+          gap: 0.75rem;
+        }
+        .vp-detail-row {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .vp-detail-label {
+          font-size: 0.75rem;
+          font-weight: 700;
+          color: #9ca3af;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .vp-detail-value {
+          font-size: 0.95rem;
+          color: #1e2124;
+          font-weight: 500;
+        }
+        .vp-detail-notes {
+          background: #f9fafb;
+          border-radius: 10px;
+          padding: 12px;
+          border: 1px solid #f0f0f0;
+        }
+        .vp-detail-notes-text {
+          font-size: 0.875rem;
+          color: #374151;
+          line-height: 1.6;
+          display: -webkit-box;
+          -webkit-line-clamp: 4;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+        .vp-change-request {
+          background: #fffbeb;
+          border: 1px solid #fcd34d;
+          border-radius: 10px;
+          padding: 12px;
+        }
 
-                    .month-nav-btn {
-                        min-width: 48px;
-                        min-height: 48px;
-                    }
-                }
+        /* Form */
+        .vp-label {
+          display: block;
+          font-size: 0.875rem;
+          font-weight: 600;
+          margin-bottom: 0.4rem;
+          color: #374151;
+        }
+        .vp-input {
+          width: 100%;
+          padding: 0.7rem 1rem;
+          border-radius: 10px;
+          border: 1px solid #e5e7eb;
+          font-size: 0.95rem;
+          outline: none;
+          transition: border-color 0.2s;
+          font-family: inherit;
+          resize: vertical;
+        }
+        .vp-input:focus {
+          border-color: var(--tibcon-red);
+          box-shadow: 0 0 0 3px rgba(227,6,19,0.08);
+        }
 
-                .premium-input {
-                    width: 100%;
-                    padding: 0.75rem 1rem;
-                    border-radius: 12px;
-                    border: 1px solid var(--tibcon-border);
-                    font-size: 1rem;
-                    outline: none;
-                }
-                .premium-input:focus {
-                    border-color: var(--tibcon-red);
-                }
-                .add-btn-overlay {
-                    position: absolute;
-                    bottom: 4px;
-                    right: 4px;
-                    width: 24px;
-                    height: 24px;
-                    background: #eee;
-                    border-radius: 50%;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    color: #999;
-                    font-size: 1.2rem;
-                    opacity: 0;
-                    transition: opacity 0.2s;
-                }
-                div:hover > .add-btn-overlay {
-                    opacity: 1;
-                }
+        /* Modal */
+        .modal-overlay {
+          position: fixed;
+          top: 0; left: 0; right: 0; bottom: 0;
+          background: rgba(0,0,0,0.5);
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          z-index: 300;
+          padding: 1rem;
+        }
+        .modal-content {
+          background: white;
+          width: 100%;
+          max-width: 500px;
+          border-radius: 20px;
+          padding: 2rem;
+          box-shadow: 0 20px 50px rgba(0,0,0,0.2);
+          max-height: 90vh;
+          overflow-y: auto;
+        }
 
-                /* GRID LAYOUTS */
-                .planning-grid {
-                    display: grid;
-                    grid-template-columns: 3fr 1fr;
-                    gap: 2rem;
-                    align-items: start;
-                }
-
-                /* CALENDAR WRAPPER */
-                .calendar-wrapper {
-                    width: 100%;
-                    max-width: 100vw;
-                    overflow-x: hidden;
-                    background: white;
-                    border-radius: 20px;
-                    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-                }
-
-                /* UNIFIED CALENDAR GRID - Single grid for headers and days */
-                .calendar-grid-unified {
-                    display: grid;
-                    grid-template-columns: repeat(7, minmax(0, 1fr));
-                    grid-auto-rows: minmax(64px, auto);
-                    gap: 1px;
-                    background: #e5e7eb;
-                    width: 100%;
-                }
-
-                /* WEEKDAY HEADERS - First row in the grid */
-                .calendar-weekday-header {
-                    background: #f8f9fa;
-                    padding: 12px 8px;
-                    text-align: center;
-                    font-weight: 700;
-                    font-size: 0.85rem;
-                    color: #6b7280;
-                    border-bottom: 2px solid #e5e7eb;
-                }
-
-                /* CALENDAR CELLS - Each day is one grid cell */
-                .calendar-cell {
-                    background: white;
-                    padding: 6px;
-                    min-width: 0;
-                    position: relative;
-                    cursor: pointer;
-                    transition: all 0.2s ease;
-                    display: flex;
-                    flex-direction: column;
-                    overflow: hidden;
-                }
-
-                .calendar-cell:hover {
-                    background: #f9fafb;
-                    box-shadow: inset 0 0 0 2px rgba(227, 6, 19, 0.1);
-                }
-
-                .calendar-cell-empty {
-                    background: #f9fafb;
-                    cursor: default;
-                }
-
-                .calendar-cell-empty:hover {
-                    background: #f9fafb;
-                    box-shadow: none;
-                }
-
-                .calendar-cell-today {
-                    background: rgba(227, 6, 19, 0.02);
-                }
-
-                /* DAY CELL HEADER - Top section with day number and today indicator */
-                .calendar-cell-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 4px;
-                }
-
-                .calendar-day-number {
-                    font-weight: 700;
-                    font-size: 0.9rem;
-                    color: #374151;
-                }
-
-                .calendar-cell-today .calendar-day-number {
-                    color: var(--tibcon-red);
-                }
-
-                .today-indicator {
-                    color: var(--tibcon-red);
-                    font-size: 0.7rem;
-                    line-height: 1;
-                }
-
-                /* DAY CELL CONTENT - Events area */
-                .calendar-cell-content {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 2px;
-                    flex: 1;
-                    overflow: hidden;
-                }
-
-                /* PLAN/EVENT INDICATORS */
-                .plan-indicator {
-                    font-size: 0.7rem;
-                    padding: 2px 4px;
-                    border-radius: 3px;
-                    cursor: pointer;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    white-space: nowrap;
-                    border-left-width: 2px;
-                    border-left-style: solid;
-                    transition: all 0.15s ease;
-                }
-
-                .plan-indicator:hover {
-                    transform: translateX(2px);
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                }
-
-                .plan-indicator.completed {
-                    background: #d1fae5;
-                    color: #065f46;
-                    border-left-color: #10b981;
-                }
-
-                .plan-indicator.assigned {
-                    background: rgba(37, 99, 235, 0.1);
-                    color: #1e40af;
-                    border-left-color: #3b82f6;
-                }
-
-                .plan-indicator.pending {
-                    background: rgba(227, 6, 19, 0.1);
-                    color: var(--tibcon-red);
-                    border-left-color: var(--tibcon-red);
-                }
-
-                .assigned-badge {
-                    font-size: 0.55rem;
-                    background: #3b82f6;
-                    color: white;
-                    padding: 1px 3px;
-                    border-radius: 2px;
-                    margin-right: 2px;
-                    font-weight: 700;
-                }
-
-                .more-events {
-                    font-size: 0.65rem;
-                    color: #6b7280;
-                    font-weight: 600;
-                    padding: 2px 4px;
-                }
-
-                /* MOBILE RESPONSIVE */
-                @media (max-width: 768px) {
-                    .planning-grid {
-                        grid-template-columns: 1fr;
-                        gap: 1rem;
-                    }
-
-                    .calendar-grid-unified {
-                        grid-auto-rows: minmax(56px, auto);
-                        gap: 0.5px;
-                    }
-
-                    .calendar-weekday-header {
-                        padding: 8px 4px;
-                        font-size: 0.65rem;
-                    }
-
-                    .calendar-cell {
-                        padding: 4px;
-                        aspect-ratio: 1 / 1;
-                        min-height: 56px;
-                    }
-
-                    .calendar-day-number {
-                        font-size: 0.75rem;
-                    }
-
-                    .today-indicator {
-                        font-size: 0.6rem;
-                    }
-
-                    /* On mobile, show colored dots instead of text */
-                    .plan-indicator {
-                        width: 6px;
-                        height: 6px;
-                        border-radius: 50%;
-                        padding: 0;
-                        border: none;
-                        flex-shrink: 0;
-                    }
-
-                    .plan-indicator.completed {
-                        background: #10b981;
-                    }
-
-                    .plan-indicator.assigned {
-                        background: #3b82f6;
-                    }
-
-                    .plan-indicator.pending {
-                        background: var(--tibcon-red);
-                    }
-
-                    .calendar-cell-content {
-                        flex-direction: row;
-                        flex-wrap: wrap;
-                        gap: 3px;
-                        align-items: center;
-                    }
-
-                    .more-events {
-                        font-size: 0.55rem;
-                        padding: 0;
-                    }
-                }
-
-                /* OLD CALENDAR STYLES - REMOVED */
-                .calendar-date-header {
-                    font-weight: 700;
-                    margin-bottom: 4px;
-                    display: flex;
-                    justify-content: space-between;
-                    color: #495057;
-                }
-                .today-badge {
-                    font-size: 0.6rem;
-                    background: var(--tibcon-red);
-                    color: white;
-                    padding: 2px 6px;
-                    border-radius: 4px;
-                }
-                .today-dot {
-                    color: var(--tibcon-red);
-                    font-size: 0.8rem;
-                    line-height: 1;
-                }
-                
-                .plan-pill {
-                    font-size: 0.7rem;
-                    padding: 2px 4px;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                    white-space: nowrap;
-                    border-left-width: 2px;
-                    border-left-style: solid;
-                }
-                .plan-pill.completed {
-                    background: #d1fae5; color: #065f46; border-left-color: #10b981;
-                }
-                .plan-pill.assigned {
-                    background: rgba(37, 99, 235, 0.1); color: #1e40af; border-left-color: #3b82f6;
-                }
-                .plan-pill.pending {
-                    background: rgba(227, 6, 19, 0.1); color: var(--tibcon-red); border-left-color: var(--tibcon-red);
-                }
-
-                .sidebar-list {
-                    display: flex;
-                    flex-direction: column;
-                    gap: 1rem;
-                    max-height: 500px;
-                    overflow-y: auto;
-                }
-
-                .plan-item {
-                    padding: 1rem;
-                    border-radius: 12px;
-                    border: 1px solid #eee;
-                    background: #fcfcfc;
-                }
-
-                /* MODAL */
-                .modal-overlay {
-                    position: fixed;
-                    top: 0;
-                    left: 0;
-                    right: 0;
-                    bottom: 0;
-                    background: rgba(0,0,0,0.5);
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    z-index: 1000;
-                    padding: 1rem;
-                }
-                .modal-content {
-                    background: white;
-                    width: 100%;
-                    max-width: 500px;
-                    border-radius: 20px;
-                    padding: 2rem;
-                    box-shadow: 0 20px 50px rgba(0,0,0,0.2);
-                    max-height: 90vh;
-                    overflow-y: auto;
-                }
-
-                /* Additional utility styles */
-                @media (max-width: 768px) {
-                    .sidebar-card {
-                        display: none;
-                    }
-
-                    .modal-content {
-                        padding: 1.5rem;
-                        border-radius: 12px;
-                    }
-                }
-            `}</style>
+        /* Responsive */
+        @media (max-width: 1024px) {
+          .vp-grid {
+            grid-template-columns: 1fr;
+          }
+          .vp-sidebar {
+            position: static;
+            max-height: none;
+          }
+        }
+        @media (max-width: 640px) {
+          .vp-header {
+            flex-direction: column;
+          }
+          .vp-drawer {
+            width: 100%;
+          }
+          .modal-content {
+            padding: 1.5rem;
+          }
+        }
+      `}</style>
         </div>
     );
 }
-
-
-
-
-
-
-
-
-
-
-
-

@@ -1,4 +1,6 @@
-export function TopBar({ metrics, onViewBom, onToQuote }: any) {
+import { ExportDiagramPDFButton } from "./ExportDiagramPDFButton";
+
+export function TopBar({ metrics, onViewBom, onToQuote, design, session }: any) {
     return (
         <div style={{ height: "70px", background: "white", borderBottom: "1px solid #dee2e6", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 2rem", boxShadow: "0 2px 4px rgba(0,0,0,0.02)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
@@ -19,6 +21,7 @@ export function TopBar({ metrics, onViewBom, onToQuote }: any) {
                 <div style={{ height: "40px", width: "1px", background: "#dee2e6", margin: "0 10px" }}></div>
 
                 <div style={{ display: "flex", gap: "10px" }}>
+                    <ExportDiagramPDFButton design={design} session={session} />
                     <button className="tibcon-btn tibcon-btn-outline" onClick={onViewBom}>BOM Listesi</button>
                     <button className="tibcon-btn tibcon-btn-primary" onClick={onToQuote}>Teklife Dönüştür</button>
                 </div>

@@ -8,13 +8,25 @@ export async function convertBomToQuote(
 ) {
     if (bom.length === 0) throw new Error("BOM boş.");
 
+    // Varsayılan iskontoyu çek
+    let defaultDiscount = 0;
+    try {
+        const { getSettings } = await import("@/lib/sheets");
+        const settingsRes = await getSettings();
+        if (settingsRes && settingsRes.ok && settingsRes.settings?.defaultDiscountPct) {
+            defaultDiscount = parseFloat(settingsRes.settings.defaultDiscountPct) || 0;
+        }
+    } catch (e) {
+        console.warn("Varsayılan iskonto alınamadı:", e);
+    }
+
     const quoteRows = bom.map(item => ({
         code: item.productCode,
         name: item.name,
         qty: item.qty,
         currency: item.currency,
         listPrice: item.price,
-        discountPct: 0,
+        discountPct: defaultDiscount,
         termin: "STOK"
     }));
 
