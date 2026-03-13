@@ -1,0 +1,16 @@
+  Determining projects to restore...
+  Writing C:\Users\bkevu\AppData\Local\Temp\tmpabc5k3.tmp
+info : X.509 certificate chain validation will use the default trust store selected by .NET for code signing.
+info : X.509 certificate chain validation will use the default trust store selected by .NET for timestamping.
+info : Adding PackageReference for package 'Microsoft.AspNetCore.Authentication.JwtBearer' into project 'C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API\Tibcon.API.csproj'.
+info :   CACHE https://api.nuget.org/v3/registration5-gz-semver2/microsoft.aspnetcore.authentication.jwtbearer/index.json
+info :   CACHE https://api.nuget.org/v3/registration5-gz-semver2/microsoft.aspnetcore.authentication.jwtbearer/page/0.0.1-alpha/3.1.15.json
+info :   CACHE https://api.nuget.org/v3/registration5-gz-semver2/microsoft.aspnetcore.authentication.jwtbearer/page/3.1.16/6.0.9.json
+info :   CACHE https://api.nuget.org/v3/registration5-gz-semver2/microsoft.aspnetcore.authentication.jwtbearer/page/6.0.10/8.0.0.json
+info :   CACHE https://api.nuget.org/v3/registration5-gz-semver2/microsoft.aspnetcore.authentication.jwtbearer/page/8.0.1/11.0.0-preview.2.26159.112.json
+info : Restoring packages for C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API\Tibcon.API.csproj...
+info :   CACHE https://api.nuget.org/v3/vulnerabilities/index.json
+info :   CACHE https://api.nuget.org/v3-vulnerabilities/2026.03.11.05.44.35/vulnerability.base.json
+info :   CACHE https://api.nuget.org/v3-vulnerabilities/2026.03.11.05.44.35/2026.03.11.05.44.35/vulnerability.update.json
+error: NU1202: Package Microsoft.AspNetCore.Authentication.JwtBearer 10.0.4 is not compatible with net9.0 (.NETCoreApp,Version=v9.0). Package Microsoft.AspNetCore.Authentication.JwtBearer 10.0.4 supports: net10.0 (.NETCoreApp,Version=v10.0)
+error: Package 'Microsoft.AspNetCore.Authentication.JwtBearer' is incompatible with 'all' frameworks in project 'C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API\Tibcon.API.csproj'.

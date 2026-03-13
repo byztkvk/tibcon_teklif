@@ -1,0 +1,11 @@
+2026-03-12 14:44:18.739 +03:00 [INF] User profile is available. Using 'C:\Users\bkevu\AppData\Local\ASP.NET\DataProtection-Keys' as key repository and Windows DPAPI to encrypt keys at rest.
+2026-03-12 14:44:19.171 +03:00 [INF] Now listening on: http://localhost:5264
+2026-03-12 14:44:19.176 +03:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-03-12 14:44:19.178 +03:00 [INF] Hosting environment: Development
+2026-03-12 14:44:19.186 +03:00 [INF] Content root path: C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API
+2026-03-12 14:44:55.988 +03:00 [INF] Request starting HTTP/1.1 POST http://localhost:5264/api/regions - application/json 2
+2026-03-12 14:44:56.100 +03:00 [INF] Authorization failed. These requirements were not met:
+RolesAuthorizationRequirement:User.IsInRole must be true for one of the following roles: (ADMIN)
+2026-03-12 14:44:56.106 +03:00 [INF] AuthenticationScheme: Bearer was challenged.
+2026-03-12 14:44:56.110 +03:00 [INF] HTTP POST /api/regions responded 401 in 60.4948 ms
+2026-03-12 14:44:56.128 +03:00 [INF] Request finished HTTP/1.1 POST http://localhost:5264/api/regions - 401 0 null 143.3202ms

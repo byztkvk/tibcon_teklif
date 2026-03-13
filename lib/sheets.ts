@@ -1,47 +1,89 @@
-// lib/sheets.ts (Root Version)
-const API = process.env.NEXT_PUBLIC_SHEETS_API_URL || "https://script.google.com/macros/s/AKfycbwgEtV6V3AjNYF8IL3q2W9uixMUhB5DOCBDnZGlVUDoMvE_5K7Yu5jMd5fXg71Ca-kQ5w/exec";
+// lib/sheets.ts - .NET Backend Version
+
+// In production, we assume the API is exposed correctly under the same domain
+// via IIS reverse proxy mappings or via external URL
+const APIUrl = process.env.NEXT_PUBLIC_API_URL || "https://app.tibcon.com.tr";
+const API = APIUrl;
+const INTERNAL_API = "/api";
+
+async function getHeaders(isInternal: boolean) {
+  let headers: any = { "Content-Type": "application/json" };
+  if (typeof window !== 'undefined') {
+    const token = localStorage.getItem("tibcon_token");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return headers;
+}
 
 async function getJSON(url: string) {
-  console.log("[lib/sheets] Fetching:", url);
+  const isInternal = url.startsWith(INTERNAL_API);
+  const targetUrl = isInternal ? `${API}${url}` : url;
+
+  console.log("[lib/sheets] Fetching:", targetUrl);
   try {
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) {
-      console.error("[lib/sheets] Fetch failed:", res.status, res.statusText);
-      const text = await res.text();
-      console.error("[lib/sheets] Response text:", text);
-      return null;
-    }
-    const data = await res.json().catch((e) => {
-      console.error("[lib/sheets] JSON Parse error:", e);
-      return null;
+    const res = await fetch(targetUrl, {
+      cache: "no-store",
+      headers: await getHeaders(isInternal)
     });
-    console.log("[lib/sheets] Parsed Data:", data);
-    return data;
+
+    if (res.status === 401) {
+      // Handle unauthorized (maybe redirect to login or refresh)
+      console.error("Unauthorized request");
+    }
+
+    if (!res.ok) {
+      console.error("[lib/sheets] Fetch failed:", res.status);
+      return { ok: false, error: "not_found", status: res.status };
+    }
+    const data = await res.json();
+    return { ...data, ok: true, success: true }; // Normalizing for existing frontend
   } catch (e) {
     console.error("[lib/sheets] Network error:", e);
     return null;
   }
 }
 
-async function postJSON(body: any) {
+async function postJSON(body: any, url: string = API) {
   try {
-    const res = await fetch(API, {
+    const isInternal = url.startsWith(INTERNAL_API) || url === API;
+    const targetUrl = (url === API) ? `${API}/api/legacy` : (url.startsWith(INTERNAL_API) ? `${API}${url}` : url);
+
+    const res = await fetch(targetUrl, {
       method: "POST",
-      // Use text/plain to avoid Preflight OPTIONS request which GAS doesn't support
-      // The body is still JSON string, and GAS will parse it fine.
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      headers: await getHeaders(isInternal),
       body: JSON.stringify(body),
     });
+
+    if (res.status === 401) {
+      console.error("Unauthorized request");
+    }
+
     const text = await res.text();
     try {
       const data = JSON.parse(text);
-      return data;
+      return { ...data, ok: true, success: true }; // Normalizing
     } catch (e) {
-      console.error("[lib/sheets] JSON Parse error. Raw text:", text);
-      return { ok: false, message: "Sunucu hatası (JSON parse): " + text.substring(0, 150) };
+      return { ok: false, message: "Sunucu hatası: " + text.substring(0, 50) };
     }
   } catch (e: any) {
-    console.error("[lib/sheets] POST error:", e);
+    return { ok: false, message: "Bağlantı hatası: " + (e.message || String(e)) };
+  }
+}
+
+async function putJSON(url: string, body: any) {
+  try {
+    const isInternal = url.startsWith(INTERNAL_API);
+    const targetUrl = `${API}${url}`;
+
+    const res = await fetch(targetUrl, {
+      method: "PUT",
+      headers: await getHeaders(isInternal),
+      body: JSON.stringify(body),
+    });
+    return await res.json();
+  } catch (e: any) {
     return { ok: false, message: "Bağlantı hatası: " + (e.message || String(e)) };
   }
 }
@@ -100,6 +142,8 @@ export type SheetUser = {
   displayName: string;
   role: Role;
   region?: string;
+  regionId?: string;
+  regionIds?: string[];
   managerEmail?: string;
   password?: string;
   active?: boolean;
@@ -134,59 +178,116 @@ export async function ping() {
 }
 
 export async function getNextQuoteNo() {
-  return postJSON({ action: "getNextQuoteNo" });
+  // Logic shifted to server handle auto-id or custom sequence in Firestore
+  return { ok: true, quoteNo: "Q-" + Date.now() };
 }
 
 export async function listUsers(): Promise<{ users: SheetUser[] } | null> {
-  return postJSON({ action: "listUsers" });
+  const result = await getJSON(`${INTERNAL_API}/users`);
+  if (result && result.success) {
+    return { users: result.users || result.data || [] };
+  }
+  return null;
 }
 
 export async function listProducts(): Promise<{ products: Product[] } | null> {
-  return postJSON({ action: "listProducts" });
+  const result = await getJSON(`${INTERNAL_API}/products`);
+  if (result && result.success) return { products: result.data || [] };
+  return null;
 }
 
 export async function upsertUser(payload: any) {
   const mappedPayload = {
-    action: "upsertUser",
     email: normalizeEmail(payload.email || payload.id),
-    name: payload.displayName || payload.fullName || payload.name,
+    displayName: payload.displayName || payload.fullName || payload.name,
     role: payload.role,
-    region: payload.region || "",
-    managerEmail: payload.managerEmail ? normalizeEmail(payload.managerEmail) : "",
-    password: payload.password,
-    active: payload.active
+    isActive: payload.active !== false,
+    passwordHash: payload.password // This will be hashed on server if present
   };
-  return postJSON(mappedPayload);
+  
+  const res = await fetch(`${API}${INTERNAL_API}/users`, {
+    method: "POST",
+    headers: await getHeaders(true),
+    body: JSON.stringify(mappedPayload)
+  });
+  return await res.json();
 }
 
 export async function listMappings(): Promise<{ harmonicMap: HarmonicMapping[]; protectionMap: ProtectionMapping[] } | null> {
-  return postJSON({ action: "listMappings" });
+  const result = await getJSON(`${INTERNAL_API}/mappings`);
+  if (result && result.success) return result.data;
+  return null;
 }
 
-export async function deleteUser(email: string) {
-  return postJSON({ action: "deleteUser", email: normalizeEmail(email) });
+export async function deleteUser(id: number | string) {
+  const res = await fetch(`${API}${INTERNAL_API}/users/${id}`, {
+    method: "DELETE",
+    headers: await getHeaders(true)
+  });
+  return await res.json();
 }
 
 
+// --- QUOTES (FIRESTORE ROUTED) ---
 
 export async function saveQuote(payload: { quote: any; rows: any[] }) {
-  return postJSON({ action: "saveQuote", ...payload });
+  // Map rows to items as expected by Firestore structure
+  // Frontend sends: code, listPrice, qty, discountPct, name, currency
+  const items = payload.rows.map(r => {
+    const listPrice = Number(r.listPrice) || Number(r.price) || 0;
+    const qty = Number(r.qty) || Number(r.quantity) || 0;
+    const discount = Number(r.discountPct) || Number(r.discount) || 0;
+    const lineTotal = (listPrice * qty) * (1 - discount / 100);
+
+    return {
+      productId: r.code || r.productId || r.productCode || r.orderCode || "",
+      productCode: r.code || r.productCode || r.productId || "",
+      name: r.name || "",
+      currency: r.currency || "TRY",
+      quantity: qty,
+      price: listPrice,
+      discount: discount,
+      lineTotal: Number(r.lineTotal) || lineTotal
+    };
+  });
+
+  const result = await postJSON({ quote: payload.quote, items }, `${INTERNAL_API}/quotes`);
+  if (result && result.success) {
+    return { ok: true, id: result.id };
+  }
+  return { ok: false, message: result?.error || "Kayıt başarısız" };
 }
 
 export async function listQuotes(): Promise<{ quotes: any[] } | null> {
-  return postJSON({ action: "listQuotes" });
+  const result = await getJSON(`${INTERNAL_API}/quotes`);
+  if (result && result.success) {
+    return { quotes: result.data };
+  }
+  return null;
 }
 
 export async function getQuoteDetail(id: string): Promise<{ quote: any } | null> {
-  return postJSON({ action: "getQuoteDetail", id });
+  const result = await getJSON(`${INTERNAL_API}/quotes/${id}`);
+  if (result && result.success) {
+    return { quote: result.data };
+  }
+  return null;
 }
 
 export async function updateQuoteStatus(id: string, status: string) {
-  return postJSON({ action: "updateQuoteStatus", id, status });
+  const result = await putJSON(`${INTERNAL_API}/quotes/${id}`, { status });
+  if (result && result.success) {
+    return { ok: true };
+  }
+  return { ok: false, message: result?.error || "Güncelleme başarısız" };
 }
 
+// --- /QUOTES ---
+
 export async function listTerms(): Promise<{ terms: QuoteTerm[] } | null> {
-  return postJSON({ action: "listTerms" });
+  const result = await getJSON(`${INTERNAL_API}/settings/terms`);
+  if (result && result.success) return { terms: result.data || [] };
+  return null;
 }
 
 export async function saveTerm(term: QuoteTerm) {
@@ -195,28 +296,34 @@ export async function saveTerm(term: QuoteTerm) {
 
 // --- SETTINGS ---
 export async function getSettings() {
-  return postJSON({ action: "getSettings" });
+  return getJSON(`${INTERNAL_API}/settings`);
 }
 
 export async function saveSettings(settings: any) {
-  return postJSON({ action: "saveSettings", settings });
+  return postJSON(settings, `${INTERNAL_API}/settings`);
 }
 
 // --- VISIT MODULE ---
 export async function listSalesPoints(params: any = {}): Promise<{ points: any[] } | null> {
-  return postJSON({ action: "listSalesPoints", ...params });
+  const qs = new URLSearchParams(params).toString();
+  const result = await getJSON(`${INTERNAL_API}/salesPoints?${qs}`);
+  if (result && result.success) return { points: result.data || [] };
+  return null;
 }
 
 export async function addSalesPoint(payload: any) {
-  return postJSON({ action: "addSalesPoint", ...payload });
+  return postJSON(payload, `${INTERNAL_API}/salesPoints`);
 }
 
 export async function addVisit(payload: any) {
-  return postJSON({ action: "addVisit", ...payload });
+  const result = await postJSON(payload, `${INTERNAL_API}/visits`);
+  return result;
 }
 
 export async function listVisits(): Promise<{ visits: any[] } | null> {
-  return postJSON({ action: "listVisits" });
+  const result = await getJSON(`${INTERNAL_API}/visits`);
+  if (result && result.ok) return { visits: result.visits || [] };
+  return { visits: [] };
 }
 
 // Visit Plan Functions
@@ -235,17 +342,24 @@ export async function updateVisitPlanStatus(payload: { id: string, status: strin
 export async function updateVisitPlanDate(payload: { id: string, plannedDate: string }) {
   return postJSON({ action: "updateVisitPlanDate", ...payload });
 }
+
 // Region Management Functions
-export async function listRegions(): Promise<{ regions: string[] } | null> {
-  return postJSON({ action: "listRegions" });
+export async function listRegions(): Promise<{ regions: any[] } | null> {
+  const result = await getJSON(`${INTERNAL_API}/regions`);
+  if (result && result.success) return { regions: result.data || [] };
+  return null;
 }
 
-export async function addRegion(region: string) {
-  return postJSON({ action: "addRegion", region });
+export async function addRegion(payload: any) {
+  return postJSON(payload, `${INTERNAL_API}/regions`);
 }
 
-export async function deleteRegion(region: string) {
-  return postJSON({ action: "deleteRegion", region });
+export async function deleteRegion(id: string) {
+  const res = await fetch(`${API}${INTERNAL_API}/regions/${id}`, {
+    method: "DELETE",
+    headers: await getHeaders(true)
+  });
+  return await res.json();
 }
 
 export async function requestPlanChange(payload: { id: string, newDate: string, note: string }) {

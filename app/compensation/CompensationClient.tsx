@@ -55,23 +55,41 @@ export default function CompensationClient() {
     // Filter Suggestion State
     const [showSuggestion, setShowSuggestion] = useState(false);
 
+    // Filter Sales Points
+    const [salesPoints, setSalesPoints] = useState<any[]>([]);
+    const [selectedPointId, setSelectedPointId] = useState("");
+    const [showPointModal, setShowPointModal] = useState(false);
     // --- Data Load ---
     useEffect(() => {
         const load = async () => {
             try {
                 setLoadingMsg("Veriler yükleniyor...");
-                const sess = localStorage.getItem("tibcon_session");
-                if (!sess) return router.push("/login");
-                setSession(JSON.parse(sess));
+                const sessStored = localStorage.getItem("tibcon_session");
+                if (!sessStored) return router.push("/login");
+                const sess = JSON.parse(sessStored);
+                setSession(sess);
 
-                const [idx, maps] = await Promise.all([
+                const [idx, maps, userRes] = await Promise.all([
                     getIndexedProducts(),
-                    listMappings()
+                    listMappings(),
+                    fetch("/api/users").then(r => r.json())
                 ]);
 
                 if (!idx) throw new Error("Ürün listesi alınamadı.");
                 setProductIndex(idx);
                 setMappings(maps || { harmonicMap: [], protectionMap: [] });
+
+                // Load Points
+                const me = userRes.data?.find((u: any) => u.email === sess.email);
+                let cityIds = "";
+                let rIds = "";
+                if (me) {
+                    if (me.cityIds) cityIds = me.cityIds.join(",");
+                    if (me.regionIds) rIds = JSON.stringify(me.regionIds);
+                }
+                const pUrl = `/api/salesPoints?role=${sess.role}&regionId=${sess.region || ""}&regionIds=${rIds}&cityIds=${cityIds}&ownerEmail=${sess.email}`;
+                const pRes = await fetch(pUrl).then(r => r.json());
+                if (pRes.success) setSalesPoints(pRes.data);
             } catch (e: any) {
                 console.error("[Compensation] Load Error:", e);
                 alert("Veri yüklenirken hata oluştu: " + e.message);
@@ -145,12 +163,22 @@ export default function CompensationClient() {
 
     const handleToQuote = async () => {
         if (bom.length === 0) return alert("BOM Listesi Boş.");
-        const name = prompt("Cari Adı:", "TASLAK KOMPANZASYON") || "";
-        if (!name) return;
+        setShowPointModal(true);
+    };
 
+    const confirmToQuote = async () => {
+        if (!selectedPointId) return alert("Lütfen bir cari seçin.");
+        const point = salesPoints.find(p => p.id === selectedPointId);
+        if (!point) return;
+
+        setShowPointModal(false);
         setLoadingMsg("Teklife dönüştürülüyor...");
         try {
-            const res = await convertBomToQuote(bom, session, { name, city: "", district: "" });
+            const res = await convertBomToQuote(bom, session, {
+                name: point.name,
+                city: point.cityName || "",
+                district: point.district || ""
+            });
             if (res?.ok) {
                 alert("Teklif başarıyla oluşturuldu.");
                 router.push(`/quotes/${res.id}`);
@@ -437,6 +465,29 @@ export default function CompensationClient() {
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            )}
+
+            {showPointModal && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <div className="premium-card" style={{ width: "100%", maxWidth: "500px", padding: "2rem" }}>
+                        <h3 className="outfit">Cari Seçimi</h3>
+                        <p className="text-muted" style={{ fontSize: "0.85rem" }}>Teklifin hangi cari için oluşturulacağını seçin.</p>
+                        <select
+                            value={selectedPointId}
+                            onChange={e => setSelectedPointId(e.target.value)}
+                            style={{ width: "100%", padding: "0.75rem", borderRadius: "10px", border: "1px solid #ddd", marginBottom: "1.5rem" }}
+                        >
+                            <option value="">Seçiniz...</option>
+                            {salesPoints.map(p => (
+                                <option key={p.id} value={p.id}>{p.name} ({p.cityName})</option>
+                            ))}
+                        </select>
+                        <div style={{ display: "flex", gap: "1rem", justifyContent: "flex-end" }}>
+                            <button className="tibcon-btn tibcon-btn-outline" onClick={() => setShowPointModal(false)}>İptal</button>
+                            <button className="tibcon-btn tibcon-btn-primary" onClick={confirmToQuote} disabled={!selectedPointId}>Teklif Oluştur</button>
+                        </div>
                     </div>
                 </div>
             )}

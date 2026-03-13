@@ -1,0 +1,13 @@
+2026-03-11 17:02:14.962 +03:00 [INF] User profile is available. Using 'C:\Users\bkevu\AppData\Local\ASP.NET\DataProtection-Keys' as key repository and Windows DPAPI to encrypt keys at rest.
+2026-03-11 17:02:15.014 +03:00 [INF] Creating key {a2bb5875-a350-4f7b-b769-33d5c7130afc} with creation date 2026-03-11 14:02:15Z, activation date 2026-03-11 14:02:15Z, and expiration date 2026-06-09 14:02:15Z.
+2026-03-11 17:02:15.055 +03:00 [INF] Writing data to file 'C:\Users\bkevu\AppData\Local\ASP.NET\DataProtection-Keys\key-a2bb5875-a350-4f7b-b769-33d5c7130afc.xml'.
+2026-03-11 17:02:15.307 +03:00 [INF] Now listening on: http://localhost:5264
+2026-03-11 17:02:15.310 +03:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-03-11 17:02:15.312 +03:00 [INF] Hosting environment: Development
+2026-03-11 17:02:15.312 +03:00 [INF] Content root path: C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API
+2026-03-11 17:07:14.696 +03:00 [INF] Request starting HTTP/1.1 GET http://localhost:5264/ - null null
+2026-03-11 17:07:14.710 +03:00 [INF] The host 'localhost:5264' does not match an allowed host.
+2026-03-11 17:07:14.721 +03:00 [INF] Request finished HTTP/1.1 GET http://localhost:5264/ - 400 334 text/html 29.2443ms
+2026-03-11 17:07:14.821 +03:00 [INF] Request starting HTTP/1.1 GET http://localhost:5264/favicon.ico - null null
+2026-03-11 17:07:14.824 +03:00 [INF] The host 'localhost:5264' does not match an allowed host.
+2026-03-11 17:07:14.826 +03:00 [INF] Request finished HTTP/1.1 GET http://localhost:5264/favicon.ico - 400 334 text/html 4.8593ms

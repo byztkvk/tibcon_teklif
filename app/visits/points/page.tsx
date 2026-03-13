@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { listSalesPoints } from "@/lib/sheets";
+// import { listSalesPoints } from "@/lib/sheets"; // Replaced with fetch API
 
 export default function SalesPointsPage() {
     const router = useRouter();
@@ -15,30 +15,32 @@ export default function SalesPointsPage() {
 
     useEffect(() => {
         const raw = localStorage.getItem("tibcon_session");
-        if (raw) setSession(JSON.parse(raw));
-
-        // Load Users for Region Mapping
-        try {
-            const rawUsers = localStorage.getItem("tibcon_users");
-            if (rawUsers) {
-                const us = JSON.parse(rawUsers);
-                const map: Record<string, any> = {};
-                if (Array.isArray(us)) {
-                    us.forEach((u: any) => { map[u.email.trim().toLowerCase()] = u; });
-                }
-                setUsersMap(map);
-            }
-        } catch (e) {
-            console.error("Users load error", e);
+        if (!raw) {
+            router.push("/login");
+            return;
         }
+        const sess = JSON.parse(raw);
+        setSession(sess);
 
         const fetchPoints = async () => {
             try {
-                const res: any = await listSalesPoints();
-                if (res?.points) {
-                    setPoints(res.points);
-                } else if (res?.data?.points) {
-                    setPoints(res.data.points);
+                // Determine user profile for cityIds if needed
+                let cityIds = "";
+                let regionIds = "";
+
+                const userRes = await fetch("/api/users").then(r => r.json());
+                const me = userRes.data?.find((u: any) => u.email === sess.email);
+
+                if (me) {
+                    if (me.cityIds) cityIds = me.cityIds.join(",");
+                    if (me.regionIds) regionIds = JSON.stringify(me.regionIds);
+                }
+
+                const url = `/api/salesPoints?role=${sess.role}&regionId=${sess.region || ""}&regionIds=${regionIds}&cityIds=${cityIds}&ownerEmail=${sess.email}`;
+                const res = await fetch(url).then(r => r.json());
+
+                if (res.success) {
+                    setPoints(res.data);
                 }
             } catch (error) {
                 console.error("Points fetch error:", error);
@@ -47,31 +49,18 @@ export default function SalesPointsPage() {
             }
         };
         fetchPoints();
-    }, []);
+    }, [router]);
 
     const filteredPoints = useMemo(() => {
-        let list = points;
-        const role = session?.role;
-        const email = session?.email ? session.email.toLowerCase() : "";
-        const region = session?.region;
-
-        if (role === "sales") {
-            // Sales Rep sees only their own points (Sales Rep Email matches)
-            list = list.filter(p => (p.FirmaEmail || "").toLowerCase() === email);
-        } else if (role === "region_manager") {
-
-        }
-
-        if (searchTerm) {
-            const lower = searchTerm.toLowerCase();
-            list = list.filter(p =>
-                (p.FirmaAdi || "").toLowerCase().includes(lower) ||
-                (p.Sehir || "").toLowerCase().includes(lower) ||
-                (p.Yetkili || "").toLowerCase().includes(lower)
-            );
-        }
-        return list;
-    }, [points, searchTerm, session]);
+        if (!searchTerm) return points;
+        const lower = searchTerm.toLowerCase();
+        return points.filter(p =>
+            (p.name || "").toLowerCase().includes(lower) ||
+            (p.cityName || "").toLowerCase().includes(lower) ||
+            (p.authorizedPerson || "").toLowerCase().includes(lower) ||
+            (p.district || "").toLowerCase().includes(lower)
+        );
+    }, [points, searchTerm]);
 
     return (
         <div className="page-container">
@@ -125,34 +114,27 @@ export default function SalesPointsPage() {
                                 <tr><td colSpan={6} style={{ padding: "3rem", textAlign: "center", color: "#666" }}>Kayıt bulunamadı.</td></tr>
                             ) : (
                                 filteredPoints.map((p, i) => (
-                                    <tr key={i}>
+                                    <tr key={p.id}>
                                         <td data-label="Firma Adı">
-                                            <div style={{ fontWeight: 700 }}>{p.FirmaAdi}</div>
-                                            {p.VergiNo && <div style={{ fontSize: "0.75rem", color: "#888" }}>VN: {p.VergiNo}</div>}
+                                            <div style={{ fontWeight: 700 }}>{p.name}</div>
+                                            <div style={{ fontSize: "0.75rem", color: "#888" }}>{p.groupName}</div>
                                         </td>
-                                        <td data-label="Lokasyon">{p.Sehir} / {p.ilce}</td>
+                                        <td data-label="Lokasyon">{p.cityName} / {p.district}</td>
                                         <td data-label="Yetkili">
-                                            <div>{p.Yetkili}</div>
+                                            <div>{p.authorizedPerson}</div>
                                         </td>
                                         <td data-label="İletişim">
-                                            {p.Telefon && <div>📞 {p.Telefon}</div>}
-                                            {p.YetkiliEmail && <div style={{ fontSize: "0.8rem", color: "#666" }}>✉️ {p.YetkiliEmail}</div>}
+                                            {p.phone && <div>📞 {p.phone}</div>}
+                                            {p.email && <div style={{ fontSize: "0.8rem", color: "#666" }}>✉️ {p.email}</div>}
                                         </td>
-                                        <td data-label="Statü">
-                                            <span className="badge" style={{
-                                                background: p.FirmaStatu?.startsWith("1.GRUP") ? "rgba(25, 135, 84, 0.1)" :
-                                                    p.FirmaStatu?.startsWith("2.GRUP") ? "rgba(13, 110, 253, 0.1)" :
-                                                        p.FirmaStatu?.startsWith("3.GRUP") ? "rgba(102, 102, 102, 0.1)" : "rgba(0,0,0,0.05)",
-                                                color: p.FirmaStatu?.startsWith("1.GRUP") ? "#198754" :
-                                                    p.FirmaStatu?.startsWith("2.GRUP") ? "#0d6efd" :
-                                                        p.FirmaStatu?.startsWith("3.GRUP") ? "#666" : "#444"
-                                            }}>
-                                                {p.FirmaStatu || "1.GRUP-BAYİ"}
-                                            </span>
+                                        <td data-label="Adres" style={{ maxWidth: "200px" }}>
+                                            <div style={{ fontSize: "0.75rem", color: "#666", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                {p.address}
+                                            </div>
                                         </td>
                                         {session?.role !== "sales" && (
-                                            <td data-label="Sorumlu" style={{ fontSize: "0.85rem", color: "#666" }}>
-                                                {p.SatisPersoneli}
+                                            <td data-label="Bölge" style={{ fontSize: "0.85rem", color: "#666" }}>
+                                                {p.regionId}
                                             </td>
                                         )}
                                         <td data-label="İşlemler" style={{ textAlign: "right" }}>

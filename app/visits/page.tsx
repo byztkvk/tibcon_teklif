@@ -37,31 +37,31 @@ export default function VisitsPage() {
     }, []);
 
     const filteredVisits = useMemo(() => {
-        let list = visits;
-        const role = session?.role;
-        const email = session?.email ? session.email.toLowerCase() : "";
-        const fullName = session?.fullName;
+        let list = visits.map(v => ({
+            ...v,
+            ZiyaretTarih: v.ziyaretTarihi || v.plannedDate || v.ZiyaretTarih,
+            FirmaAdi: v.cariUnvan || v.firmaAdi || v.FirmaAdi,
+            SatisPersoneli: v.personelAdi || v.satisPersoneli || v.SatisPersoneli,
+            Bölge: v.regionId || v.bolge || v.Bölge,
+            İl: v.sehir || v.İl || v.Sehir,
+            İlçe: v.ilce || v.İlçe,
+            YetkiliKisi: v.yetkiliKisi || v.YetkiliKisi || v.Yetkili,
+            ZiyaretNotu: v.ziyaretNotu || v.notes || v.ZiyaretNot
+        }));
 
-        if (role === "sales") {
-            list = list.filter(v =>
-                (v.SatisPersoneliEmail && v.SatisPersoneliEmail.toLowerCase() === email) ||
-                (v.SatisPersoneli === fullName)
-            );
-        } else if (role === "region_manager") {
-            const region = session?.region;
-            list = list.filter(v =>
-                v.Bölge === region ||
-                (v.SatisPersoneliEmail && v.SatisPersoneliEmail.toLowerCase() === email) ||
-                (v.SatisPersoneli === fullName)
-            );
-        }
+        const role = session?.role;
+
+        // No more email-based strict filtering for sales; the API handles city-based visibility.
+        // But we can keep search filter.
 
         if (searchTerm) {
             const lower = searchTerm.toLowerCase();
             list = list.filter(v =>
                 v.FirmaAdi?.toLowerCase().includes(lower) ||
                 v.İl?.toLowerCase().includes(lower) ||
-                v.ZiyaretNot?.toLowerCase().includes(lower)
+                v.İlçe?.toLowerCase().includes(lower) ||
+                v.ZiyaretNotu?.toLowerCase().includes(lower) ||
+                v.SatisPersoneli?.toLowerCase().includes(lower)
             );
         }
         return [...list].sort((a, b) => new Date(b.ZiyaretTarih).getTime() - new Date(a.ZiyaretTarih).getTime());
@@ -407,7 +407,7 @@ export default function VisitsPage() {
                                                 <div style={{ fontSize: "0.7rem", color: "#666" }}>{v.Bölge}</div>
                                             </td>
                                             <td>{v.YetkiliKisi || v.Yetkili}</td>
-                                            <td style={{ maxWidth: "250px", fontSize: "0.85rem" }}>{v.ZiyaretNot}</td>
+                                            <td style={{ maxWidth: "250px", fontSize: "0.85rem" }}>{v.ZiyaretNotu}</td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -499,7 +499,7 @@ export default function VisitsPage() {
                         <div style={{ background: "#f8f9fa", padding: "1.5rem", borderRadius: "12px", border: "1px solid #eee" }}>
                             <h4 style={{ margin: "0 0 1rem 0", color: "#888", fontSize: "0.8rem", textTransform: "uppercase" }}>Ziyaret Notları</h4>
                             <p style={{ margin: 0, fontSize: "1rem", lineHeight: "1.6", color: "var(--tibcon-anth)" }}>
-                                {selectedVisit.ZiyaretNot}
+                                {selectedVisit.ZiyaretNotu}
                             </p>
                         </div>
 

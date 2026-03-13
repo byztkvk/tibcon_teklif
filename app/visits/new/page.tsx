@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { listSalesPoints, addVisit, updateVisitPlanStatus } from "@/lib/sheets";
+import { addVisit, updateVisitPlanStatus } from "@/lib/sheets";
 import LoadingOverlay from "@/components/LoadingOverlay";
 
 // Helper component to handle search params
@@ -74,45 +74,38 @@ function VisitFormContent() {
         const fetchPoints = async () => {
             setLoadingMessage("Müşteri listesi hazırlanıyor...");
             try {
-                console.log("[DEBUG] Fetching sales points...");
-                const res: any = await listSalesPoints();
-                console.log("[DEBUG] Fetch response:", res);
-                if (res?.points) {
-                    let allPoints = res.points;
+                const sRaw = localStorage.getItem("tibcon_session");
+                if (!sRaw) return;
+                const s = JSON.parse(sRaw);
 
-                    // Client-side filtering for sales role
-                    // session state might be stale inside async, use localStorage directly or current parsed 's' if possible.
-                    // Better to use the 'session' state which is updated in useEffect, but inside useEffect 'session' might be initial null.
-                    // We'll trust the local 's' variable if we move this inside the same useEffect or re-read localStorage.
+                // Filter for Sales Points / Region Managers via API
+                let cityIds = "";
+                let regionIdsArr = "";
 
-                    // Actually, let's just use the session state. But fetchPoints is called in useEffect. 
-                    // Let's re-read localStorage here to be safe and synchronous.
-                    const raw = localStorage.getItem("tibcon_session");
-                    if (raw) {
-                        const s = JSON.parse(raw);
-                        if (s.role === "sales") {
-                            // Filter logic: FirmaEmail holds the Sales Rep Email based on our backend mapping
-                            allPoints = allPoints.filter((p: any) =>
-                                (p.FirmaEmail || "").toLowerCase() === (s.email || "").toLowerCase()
-                            );
-                        }
-                    }
+                const userRes = await fetch("/api/users").then(r => r.json());
+                const me = userRes.data?.find((u: any) => u.email === s.email);
 
+                if (me) {
+                    if (me.cityIds) cityIds = me.cityIds.join(",");
+                    if (me.regionIds) regionIdsArr = JSON.stringify(me.regionIds);
+                }
+
+                const pointsUrl = `/api/salesPoints?role=${s.role}&regionId=${s.region || ""}&regionIds=${regionIdsArr}&cityIds=${cityIds}&ownerEmail=${s.email}`;
+                const res = await fetch(pointsUrl).then(r => r.json());
+
+                if (res?.success && res.data) {
+                    const allPoints = res.data;
                     setSalesPoints(allPoints);
 
                     // If we have a firmaParam, try to auto-select the point to fill other fields
                     if (firmaParam) {
                         const match = allPoints.find((p: any) =>
-                            (p.FirmaAdi || p["Firma Adı"] || "").toLowerCase() === firmaParam.toLowerCase()
+                            (p.name || p.FirmaAdi || "").toLowerCase() === firmaParam.toLowerCase()
                         );
                         if (match) {
                             handleSelectPoint(match); // Auto-fill details
                         }
                     }
-                } else if (res?.data?.points) {
-                    setSalesPoints(res.data.points);
-                } else if (Array.isArray(res)) {
-                    setSalesPoints(res);
                 }
             } catch (error) {
                 console.error("Sales points fetch error:", error);
@@ -130,18 +123,17 @@ function VisitFormContent() {
 
         return {
             ...rawP,
-            FirmaAdi: rawP.FirmaAdi || rawP.name,
-            Sehir: rawP.Sehir,
-            ilce: rawP.ilce || rawP.District,
-            Yetkili: rawP.Yetkili,
-            FirmaStatu: rawP.FirmaStatu,
-            // Prioritize YetkiliEmail as customer email
-            FirmaEmail: rawP.YetkiliEmail || rawP.FirmaEmail,
-            Telefon: rawP.Telefon,
-            Adres: rawP.Adres,
+            FirmaAdi: rawP.name || rawP.FirmaAdi,
+            Sehir: rawP.cityName || rawP.Sehir,
+            ilce: rawP.district || rawP.ilce || rawP.District,
+            Yetkili: rawP.authorizedPerson || rawP.Yetkili,
+            FirmaStatu: rawP.FirmaStatu || "Müşteri",
+            FirmaEmail: rawP.email || rawP.YetkiliEmail || rawP.FirmaEmail,
+            Telefon: rawP.phone || rawP.Telefon,
+            Adres: rawP.address || rawP.Adres,
             SatisPersoneli: rawP.SatisPersoneli,
-            VergiDairesi: rawP.VergiDairesi,
-            VergiNo: rawP.VergiNo,
+            VergiDairesi: rawP.taxOffice || rawP.VergiDairesi,
+            VergiNo: rawP.taxNumber || rawP.VergiNo,
             id: rawP.id
         };
     };
@@ -239,19 +231,23 @@ function VisitFormContent() {
         setLoading(true);
         setLoadingMessage("Ziyaret kaydı kaydediliyor...");
         try {
+            // Find the selected point to get cityId/regionId
+            const selectedPoint = salesPoints.find(p => (p.name || p.FirmaAdi) === formData.FirmaAdi);
+            const adapted = adaptPoint(selectedPoint);
+
             const res = await addVisit({
-                // Backend expects camelCase keys
-                firmaAdi: formData.FirmaAdi,
-                ziyaretTarih: formData.ZiyaretTarih,
-                satisPersoneli: formData.SatisPersoneli,
-                il: formData.Il,
+                cariId: adapted.id || "",
+                cariUnvan: formData.FirmaAdi,
+                ziyaretTarihi: formData.ZiyaretTarih,
+                personelAdi: session?.fullName || session?.name || "Bilinmeyen Personel",
+                sehir: formData.Il,
                 ilce: formData.Ilce,
-                ziyaretNot: formData.ZiyaretNot,
+                ziyaretNotu: formData.ZiyaretNot,
                 yetkiliKisi: formData.YetkiliKisi,
-                tel: formData.Telefon,
-                bolge: formData.Bolge,
-                ziyaretTipi: "Ziyaret", // Default generic type
-                satisPersoneliEmail: session?.email || "",
+                telefon: formData.Telefon,
+                regionId: adapted.regionId || "",
+                cityId: adapted.cityId || "",
+                ziyaretTipi: "Ziyaret",
                 planId: planIdParam || ""
             });
             if (res?.ok) {

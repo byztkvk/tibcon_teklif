@@ -28,6 +28,11 @@ export default function LoginPage() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [loading, setLoading] = useState(false);
+    const [step, setStep] = useState<1 | 2>(1);
+    const [isFirstLogin, setIsFirstLogin] = useState(false);
+    const [matchedUser, setMatchedUser] = useState<any>(null);
+    const [allUsers, setAllUsers] = useState<any[]>([]);
+
     const [logs, setLogs] = useState<string[]>([]);
     const [showLogs, setShowLogs] = useState(false);
 
@@ -36,56 +41,136 @@ export default function LoginPage() {
         console.log(msg);
     }
 
-    async function handleLogin() {
-        addLog("Login initialized...");
+    async function handleCheckEmail() {
         const emailN = normalizeEmail(email);
-        const passN = String(password ?? "").trim();
-
-        if (!emailN || !passN) {
-            alert("Lütfen tüm alanları doldurun.");
+        if (!emailN) {
+            alert("Lütfen bir e-posta adresi girin.");
             return;
         }
 
         setLoading(true);
         try {
-            const res = await listUsers();
-            if (!res?.users) {
-                alert("Sistem hatası: Kullanıcı listesi alınamadı.");
+            const apiBase = process.env.NEXT_PUBLIC_API_URL || "https://app.tibcon.com.tr";
+            const res = await fetch(`${apiBase}/api/auth/check-user?email=${encodeURIComponent(emailN)}`);
+            const data = await res.json();
+
+            if (!data.exists) {
+                alert("Sistemde bu e-posta adresi ile kayıtlı bir kullanıcı bulunamadı.");
                 setLoading(false);
                 return;
             }
 
-            const users = res.users;
-            const u = users.find((x: any) => normalizeEmail(x.email) === emailN);
+            setMatchedUser({ email: emailN });
+            if (!data.hasPassword) {
+                setIsFirstLogin(true);
+            } else {
+                setIsFirstLogin(false);
+            }
 
-            if (!u || String(u.password ?? "").trim() !== passN) {
+            setStep(2);
+            setLoading(false);
+        } catch (e: any) {
+            alert("Sorgulama sırasında bir hata oluştu: " + (e.message || e));
+            setLoading(false);
+        }
+    }
+
+    async function handleSetInitialPassword() {
+        if (!password || password.length < 6) {
+            alert("Lütfen en az 6 karakterli bir şifre belirleyin.");
+            return;
+        }
+
+        setLoading(true);
+        try {
+            const apiBase = process.env.NEXT_PUBLIC_API_URL || "https://app.tibcon.com.tr";
+            const res = await fetch(`${apiBase}/api/auth/set-password`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, password })
+            });
+
+            if (!res.ok) {
+                const err = await res.text();
+                alert("Şifre oluşturma hatası: " + err);
+                setLoading(false);
+                return;
+            }
+
+            alert("Şifreniz başarıyla oluşturuldu. Şimdi giriş yapabilirsiniz.");
+            setIsFirstLogin(false);
+            setPassword("");
+            setLoading(false);
+        } catch (e: any) {
+            alert("Hata oluştu: " + e.message);
+            setLoading(false);
+        }
+    }
+
+    async function handleLogin() {
+        if (!email || !password) {
+            alert("Lütfen e-posta ve şifrenizi girin.");
+            return;
+        }
+
+        setLoading(true);
+        try {
+            const apiBase = process.env.NEXT_PUBLIC_API_URL || "https://app.tibcon.com.tr";
+            const res = await fetch(`${apiBase}/api/auth/login`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, password })
+            });
+
+            if (res.status === 401) {
                 alert("E-posta veya şifre hatalı.");
                 setLoading(false);
                 return;
             }
 
+            if (!res.ok) {
+                const errText = await res.text();
+                alert("Giriş hatası: " + errText);
+                setLoading(false);
+                return;
+            }
+
+            const data = await res.json();
+            // data: { accessToken, refreshToken, user: { id, email, displayName, role, cityIds, regionIds } }
+
             const session = {
-                email: u.email,
-                fullName: u.displayName,
-                role: u.role,
-                region: u.region,
-                managerEmail: u.managerEmail,
+                id: data.user.id,
+                email: data.user.email,
+                fullName: data.user.displayName,
+                role: (data.user.role || "sales").toLowerCase(),
+                cityIds: data.user.cityIds || [],
+                regionIds: data.user.regionIds || [],
             };
 
+            localStorage.setItem("tibcon_token", data.accessToken);
+            localStorage.setItem("tibcon_refresh_token", data.refreshToken);
+            localStorage.setItem("tibcon_session", JSON.stringify(session));
+            document.cookie = `tibcon_token=${data.accessToken}; path=/; max-age=86400`;
+
+            // Sync with server-side session (optional)
             await fetch("/api/login", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(session),
             });
 
-            localStorage.setItem("tibcon_session", JSON.stringify(session));
-            localStorage.setItem("tibcon_users", JSON.stringify(users));
             window.location.href = "/";
         } catch (e: any) {
             alert("Giriş sırasında bir hata oluştu: " + (e.message || e));
             setLoading(false);
         }
     }
+
+    const resetStep = () => {
+        setStep(1);
+        setPassword("");
+        setMatchedUser(null);
+    };
 
     return (
         <div style={containerStyle}>
@@ -108,38 +193,87 @@ export default function LoginPage() {
                 </div>
 
                 <div style={formStyle}>
-                    <div style={inputGroupStyle}>
-                        <label style={labelStyle}>E-posta</label>
-                        <input
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            style={inputStyle}
-                            className="tibcon-input"
-                            placeholder="admin@tibcon.com.tr"
-                        />
-                    </div>
+                    {step === 1 ? (
+                        <>
+                            <div style={inputGroupStyle}>
+                                <label style={labelStyle}>E-posta</label>
+                                <input
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    style={inputStyle}
+                                    className="tibcon-input"
+                                    placeholder="ornek@tibcon.com.tr"
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") handleCheckEmail();
+                                    }}
+                                />
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleCheckEmail}
+                                disabled={loading}
+                                className="tibcon-btn tibcon-btn-primary"
+                                style={{ width: "100%", marginTop: "1rem" }}
+                            >
+                                {loading ? "Sorgulanıyor..." : "Devam Et"}
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            <div style={inputGroupStyle}>
+                                <label style={labelStyle}>E-posta</label>
+                                <input
+                                    value={email}
+                                    disabled
+                                    style={{ ...inputStyle, background: "#f5f5f5", cursor: "not-allowed" }}
+                                    className="tibcon-input"
+                                />
+                            </div>
 
-                    <div style={inputGroupStyle}>
-                        <label style={labelStyle}>Şifre</label>
-                        <input
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            style={inputStyle}
-                            className="tibcon-input"
-                            placeholder="••••••"
-                            type="password"
-                        />
-                    </div>
+                            <div style={inputGroupStyle}>
+                                <label style={labelStyle}>
+                                    {isFirstLogin ? "Yeni Şifre Belirleyin" : "Şifre"}
+                                </label>
+                                <input
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    style={inputStyle}
+                                    className="tibcon-input"
+                                    placeholder="••••••"
+                                    type="password"
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                            isFirstLogin ? handleSetInitialPassword() : handleLogin();
+                                        }
+                                    }}
+                                />
+                                {isFirstLogin && (
+                                    <p style={{ fontSize: "0.75rem", color: "var(--tibcon-anth)", marginTop: "0.25rem" }}>
+                                        * İlk girişiniz için bir şifre belirleyin (en az 6 karakter).
+                                    </p>
+                                )}
+                            </div>
 
-                    <button
-                        type="button"
-                        onClick={handleLogin}
-                        disabled={loading}
-                        className="tibcon-btn tibcon-btn-primary"
-                        style={{ width: "100%", marginTop: "1rem" }}
-                    >
-                        {loading ? "Giriş Yapılıyor..." : "Giriş Yap"}
-                    </button>
+                            <button
+                                type="button"
+                                onClick={isFirstLogin ? handleSetInitialPassword : handleLogin}
+                                disabled={loading}
+                                className="tibcon-btn tibcon-btn-primary"
+                                style={{ width: "100%", marginTop: "1rem" }}
+                            >
+                                {loading ? "İşleniyor..." : (isFirstLogin ? "Şifreyi Kaydet" : "Giriş Yap")}
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={resetStep}
+                                style={{ ...debugToggleStyle, textDecoration: "none", marginTop: "0.5rem" }}
+                            >
+                                v Geri Dön
+                            </button>
+                        </>
+                    )}
 
                     <button
                         onClick={() => setShowLogs(!showLogs)}

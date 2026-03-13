@@ -148,6 +148,19 @@ export default function QuotesPage() {
         }
     };
 
+    const handleUpdateTeklifDurumu = async (id: string, next: string) => {
+        try {
+            await fetch(`/api/quotes/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ teklifDurumu: next })
+            });
+            setQuotes(prev => prev.map(q => q.id === id ? { ...q, teklifDurumu: next as any } : q));
+        } catch (err: any) {
+            alert("Hata: " + err.message);
+        }
+    };
+
     if (!session) return null;
 
     return (
@@ -195,8 +208,9 @@ export default function QuotesPage() {
                                 <th>Teklif No</th>
                                 <th>Cari Bilgisi</th>
                                 <th>Tarih</th>
-                                <th>Bölge</th>
-                                <th>Durum</th>
+                                <th>Bölge / Şehir</th>
+                                <th>Akış Durumu</th>
+                                <th>Teklif Sonucu</th>
                                 <th style={{ textAlign: "right" }}>İşlem</th>
                             </tr>
                         </thead>
@@ -204,27 +218,42 @@ export default function QuotesPage() {
                         <tbody>
                             {quotes.length === 0 ? (
                                 <tr>
-                                    <td colSpan={6} style={{ padding: "4rem", textAlign: "center", color: "var(--tibcon-gray-dark)" }}>
+                                    <td colSpan={7} style={{ padding: "4rem", textAlign: "center", color: "var(--tibcon-gray-dark)" }}>
                                         {loading ? "Veriler senkronize ediliyor..." : "Görüntülenecek teklif bulunamadı."}
                                     </td>
                                 </tr>
                             ) : (
-                                quotes.map((q) => (
+                                quotes.map((q: any) => (
                                     <tr key={q.id}>
                                         <td data-label="Teklif No">
                                             <div style={{ fontWeight: 800, color: "var(--tibcon-black)" }}>{q.id}</div>
-                                            <div style={{ fontSize: "0.7rem", color: "#888", marginTop: "2px" }}>{q.createdBy.split('@')[0]}</div>
+                                            <div style={{ fontSize: "0.7rem", color: "#888", marginTop: "2px" }}>{(q.createdBy || "").split('@')[0]}</div>
                                         </td>
                                         <td data-label="Cari Bilgisi">
-                                            <div style={{ fontWeight: 600 }}>{q.cari}</div>
+                                            <div style={{ fontWeight: 600 }}>{q.cariUnvan || q.cari}</div>
                                             <div style={{ fontSize: "0.75rem", color: "var(--tibcon-gray-dark)" }}>{q.ownerEmail}</div>
                                         </td>
-                                        <td data-label="Tarih">{q.createdAt}</td>
-                                        <td data-label="Bölge"><span className="badge" style={{ background: "#f1f3f5", color: "#495057" }}>{q.region}</span></td>
-                                        <td data-label="Durum">
+                                        <td data-label="Tarih" style={{ fontSize: "0.85rem" }}>{(q.createdAt || "").substring(0, 10)}</td>
+                                        <td data-label="Bölge / Şehir">
+                                            <span className="badge" style={{ background: "#f1f3f5", color: "#495057", display: "block", marginBottom: "4px" }}>{q.region || q.regionId}</span>
+                                            {q.cityId && <span style={{ fontSize: "0.75rem", color: "#666" }}>📍 {q.cityId}</span>}
+                                        </td>
+                                        <td data-label="Akış Durumu">
                                             <span className="badge" style={statusBadgeStyle(q.status)}>
                                                 {statusLabel(q.status)}
                                             </span>
+                                        </td>
+                                        <td data-label="Teklif Sonucu">
+                                            <select
+                                                className="premium-input"
+                                                style={{ fontSize: "0.8rem", padding: "4px 8px", minWidth: "120px" }}
+                                                value={q.teklifDurumu || "BEKLEMEDE"}
+                                                onChange={(e) => handleUpdateTeklifDurumu(q.id, e.target.value)}
+                                            >
+                                                <option value="BEKLEMEDE">⌛ BEKLEMEDE</option>
+                                                <option value="SIPARISE_DONUSTU">🛒 SİPARİŞ</option>
+                                                <option value="IPTAL">❌ İPTAL</option>
+                                            </select>
                                         </td>
                                         <td data-label="İşlem" style={{ textAlign: "right" }}>
                                             <div style={{ display: "inline-flex", gap: "8px", justifyContent: "flex-end", width: "100%" }}>

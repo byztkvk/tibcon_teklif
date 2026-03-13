@@ -1,0 +1,25 @@
+2026-03-13 13:47:28.417 +03:00 [INF] User profile is available. Using 'C:\Users\bkevu\AppData\Local\ASP.NET\DataProtection-Keys' as key repository and Windows DPAPI to encrypt keys at rest.
+2026-03-13 13:47:28.691 +03:00 [INF] Now listening on: http://localhost:5264
+2026-03-13 13:47:28.694 +03:00 [INF] Application started. Press Ctrl+C to shut down.
+2026-03-13 13:47:28.695 +03:00 [INF] Hosting environment: Development
+2026-03-13 13:47:28.696 +03:00 [INF] Content root path: C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API
+2026-03-13 13:51:48.684 +03:00 [INF] Request starting HTTP/1.1 HEAD http://localhost:5264/api/cities - null null
+2026-03-13 13:51:48.784 +03:00 [INF] Failed to validate the token.
+Microsoft.IdentityModel.Tokens.SecurityTokenMalformedException: IDX14100: JWT is not well formed, there are no dots (.).
+The token needs to be in JWS or JWE Compact Serialization Format. (JWS): 'EncodedHeader.EncodedPayload.EncodedSignature'. (JWE): 'EncodedProtectedHeader.EncodedEncryptedKey.EncodedInitializationVector.EncodedCiphertext.EncodedAuthenticationTag'.
+   at Microsoft.IdentityModel.JsonWebTokens.JsonWebToken.ReadToken(ReadOnlyMemory`1 encodedTokenMemory)
+   at Microsoft.IdentityModel.JsonWebTokens.JsonWebToken..ctor(String jwtEncodedString)
+   at Microsoft.IdentityModel.JsonWebTokens.JsonWebTokenHandler.ReadToken(String token, TokenValidationParameters validationParameters)
+2026-03-13 13:51:48.805 +03:00 [INF] Bearer was not authenticated. Failure message: IDX14100: JWT is not well formed, there are no dots (.).
+The token needs to be in JWS or JWE Compact Serialization Format. (JWS): 'EncodedHeader.EncodedPayload.EncodedSignature'. (JWE): 'EncodedProtectedHeader.EncodedEncryptedKey.EncodedInitializationVector.EncodedCiphertext.EncodedAuthenticationTag'.
+2026-03-13 13:51:48.808 +03:00 [INF] Executing endpoint '405 HTTP Method Not Supported'
+2026-03-13 13:51:48.810 +03:00 [INF] Executed endpoint '405 HTTP Method Not Supported'
+2026-03-13 13:51:48.812 +03:00 [INF] HTTP HEAD /api/cities responded 405 in 78.4663 ms
+2026-03-13 13:51:48.820 +03:00 [INF] Request finished HTTP/1.1 HEAD http://localhost:5264/api/cities - 405 null null 138.4777ms
+2026-03-13 13:57:26.911 +03:00 [INF] Request starting HTTP/1.1 GET http://localhost:5264/health - null null
+2026-03-13 13:57:26.917 +03:00 [INF] Executing endpoint 'HTTP: GET /health'
+2026-03-13 13:57:42.088 +03:00 [INF] Setting HTTP status code 500.
+2026-03-13 13:57:42.112 +03:00 [INF] Writing value of type 'ProblemDetails' as Json.
+2026-03-13 13:57:42.135 +03:00 [INF] Executed endpoint 'HTTP: GET /health'
+2026-03-13 13:57:42.137 +03:00 [ERR] HTTP GET /health responded 500 in 15221.0089 ms
+2026-03-13 13:57:42.138 +03:00 [INF] Request finished HTTP/1.1 GET http://localhost:5264/health - 500 null application/problem+json 15227.9613ms

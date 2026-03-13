@@ -10,9 +10,7 @@ import interactionPlugin from "@fullcalendar/interaction";
 import type { EventInput } from "@fullcalendar/core";
 // Callback arg types are typed as any for cross-version compatibility
 import {
-    listSalesPoints,
     listVisitPlans,
-    listUsers,
     addVisitPlan,
     updateVisitPlanStatus,
     updateVisitPlanDate,
@@ -142,23 +140,37 @@ export default function VisitPlanningPage() {
     useEffect(() => {
         const load = async () => {
             try {
-                const [sRes, pRes, spRes, uRes, setRes]: any[] = await Promise.all([
-                    Promise.resolve(localStorage.getItem("tibcon_session")),
+                const sRaw = localStorage.getItem("tibcon_session");
+                const [pRes, uRes, setRes]: any[] = await Promise.all([
                     listVisitPlans(),
-                    listSalesPoints(),
-                    listUsers(),
+                    fetch("/api/users").then(r => r.json()),
                     getSettings(),
                 ]);
-                if (sRes) {
-                    const s = JSON.parse(sRes);
+
+                let s: any = null;
+                if (sRaw) {
+                    s = JSON.parse(sRaw);
                     setSession(s);
                     setSelectedRep(s.email);
                 }
+
                 if (pRes?.plans) setPlans(pRes.plans);
-                if (spRes?.points) setSalesPoints(spRes.points);
-                else if (Array.isArray(spRes)) setSalesPoints(spRes);
-                if (uRes?.users) setUsers(uRes.users);
+                if (uRes?.data) setUsers(uRes.data);
                 if (setRes?.settings) setSettings(setRes.settings);
+
+                // Now fetch Sales Points with role filtering
+                if (s) {
+                    const me = uRes.data?.find((u: any) => u.email === s.email);
+                    let cityIds = "";
+                    let regionIdsArr = "";
+                    if (me) {
+                        if (me.cityIds) cityIds = me.cityIds.join(",");
+                        if (me.regionIds) regionIdsArr = JSON.stringify(me.regionIds);
+                    }
+                    const pointsUrl = `/api/salesPoints?role=${s.role}&regionId=${s.region || ""}&regionIds=${regionIdsArr}&cityIds=${cityIds}&ownerEmail=${s.email}`;
+                    const spRes = await fetch(pointsUrl).then(r => r.json());
+                    if (spRes.success) setSalesPoints(spRes.data);
+                }
             } catch (e) {
                 console.error("Load Error", e);
             } finally {
@@ -191,8 +203,9 @@ export default function VisitPlanningPage() {
     const filteredSalesPoints = searchFirm
         ? salesPoints
             .filter((p) => {
-                const name = (p.FirmaAdi || p["Firma Adı"] || "").toLowerCase();
-                return name.includes(searchFirm.toLowerCase());
+                const name = (p.name || p.FirmaAdi || p["Firma Adı"] || "").toLowerCase();
+                const city = (p.cityName || p.Sehir || p["Şehir"] || "").toLowerCase();
+                return name.includes(searchFirm.toLowerCase()) || city.includes(searchFirm.toLowerCase());
             })
             .slice(0, 10)
         : [];
@@ -265,9 +278,9 @@ export default function VisitPlanningPage() {
         const newPlan: VisitPlan = {
             id: crypto.randomUUID(),
             salesPointId: selectedPoint.id || "",
-            firmaAdi: selectedPoint.FirmaAdi || selectedPoint["Firma Adı"],
-            sehir: selectedPoint.Sehir || selectedPoint["Şehir"] || "",
-            ilce: selectedPoint.ilce || selectedPoint["İlçe"] || "",
+            firmaAdi: selectedPoint.name || selectedPoint.FirmaAdi || selectedPoint["Firma Adı"],
+            sehir: selectedPoint.cityName || selectedPoint.Sehir || selectedPoint["Şehir"] || "",
+            ilce: selectedPoint.district || selectedPoint.ilce || selectedPoint["İlçe"] || "",
             plannedDate: formDate,
             notes: formNote,
             status: "PENDING",

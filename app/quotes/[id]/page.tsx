@@ -47,9 +47,13 @@ type Quote = {
     ownerEmail: string; // email (sales)
     region: string; // "1. Bölge" etc
     status: QuoteStatus;
+    teklifDurumu?: "BEKLEMEDE" | "SIPARISE_DONUSTU" | "IPTAL";
+    siparisNo?: string;
+    siparisTarihi?: string;
     rows: QuoteRow[];
     terms?: string;
     yetkili?: string;
+    cityId?: string;
 };
 
 // ====== Storage keys (change here if your project uses different ones) ======
@@ -498,6 +502,47 @@ export default function QuoteDetailPage() {
 
                 {err && <div style={errorBannerStyle}>{err}</div>}
                 {msg && <div style={successBannerStyle}>{msg}</div>}
+
+                {/* STATUS TRACKING SECTION */}
+                <div className="premium-card" style={{ background: "rgba(0, 51, 102, 0.02)", border: "1px solid rgba(0, 51, 102, 0.1)", marginBottom: "2rem" }}>
+                    <h3 className="outfit mb-4" style={{ fontSize: "1.1rem", color: "var(--tibcon-blue)" }}>🛒 Teklif Statü ve Sipariş Takibi</h3>
+                    <div className="stack-mobile" style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap" }}>
+                        <div style={{ flex: 1, minWidth: "200px" }}>
+                            <label style={labelStyle}>Teklif Sonuç Durumu</label>
+                            <select
+                                className="premium-input"
+                                value={quote.teklifDurumu || "BEKLEMEDE"}
+                                onChange={(e) => setQuote({ ...quote, teklifDurumu: e.target.value as any })}
+                                disabled={!canEdit}
+                                style={{ ...inputStyle, padding: "0.75rem" }}
+                            >
+                                <option value="BEKLEMEDE">⏳ BEKLEMEDE</option>
+                                <option value="SIPARISE_DONUSTU">✅ SİPARİŞE DÖNÜŞTÜ</option>
+                                <option value="IPTAL">❌ İPTAL EDİLDİ</option>
+                            </select>
+                        </div>
+                        <div style={{ flex: 1, minWidth: "200px" }}>
+                            <label style={labelStyle}>Sipariş No (Varsa)</label>
+                            <input
+                                placeholder="Örn: S12345"
+                                value={quote.siparisNo || ""}
+                                onChange={(e) => setQuote({ ...quote, siparisNo: e.target.value })}
+                                disabled={!canEdit || quote.teklifDurumu !== "SIPARISE_DONUSTU"}
+                                style={inputStyle}
+                            />
+                        </div>
+                        <div style={{ flex: 1, minWidth: "200px" }}>
+                            <label style={labelStyle}>Sipariş Tarihi</label>
+                            <input
+                                type="date"
+                                value={quote.siparisTarihi || ""}
+                                onChange={(e) => setQuote({ ...quote, siparisTarihi: e.target.value })}
+                                disabled={!canEdit || quote.teklifDurumu !== "SIPARISE_DONUSTU"}
+                                style={inputStyle}
+                            />
+                        </div>
+                    </div>
+                </div>
 
                 {/* Form Fields */}
                 <div className="stack-mobile" style={mainGridStyle}>

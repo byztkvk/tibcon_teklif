@@ -48,20 +48,34 @@ export default function AgendaPage() {
             setViewMode("FOLDER");
         }
 
-        fetchData(s.email);
+        fetchData(s.email, s);
     }, [router, searchParams]);
 
-    async function fetchData(email: string) {
+    async function fetchData(email: string, session: any) {
         setLoading(true);
         setLoadingMessage("Notlar ve görevler yükleniyor...");
         try {
-            const [agendaRes, pointsRes] = await Promise.all([
+            // Determine user profile for cityIds if needed
+            let cityIds = "";
+            let regionIdsArr = "";
+
+            const userRes = await fetch("/api/users").then(r => r.json());
+            const me = userRes.data?.find((u: any) => u.email === session.email);
+
+            if (me) {
+                if (me.cityIds) cityIds = me.cityIds.join(",");
+                if (me.regionIds) regionIdsArr = JSON.stringify(me.regionIds);
+            }
+
+            const pointsUrl = `/api/salesPoints?role=${session.role}&regionId=${session.region || ""}&regionIds=${regionIdsArr}&cityIds=${cityIds}&ownerEmail=${session.email}`;
+
+            const [agendaRes, pointsResNative] = await Promise.all([
                 listAgenda(email),
-                listSalesPoints() // Sales reps only see their own points if filtered at backend, or we filter here
+                fetch(pointsUrl).then(r => r.json())
             ]);
 
             if (agendaRes) setItems(agendaRes.items);
-            if (pointsRes) setSalesPoints(pointsRes.points);
+            if (pointsResNative.success) setSalesPoints(pointsResNative.data);
         } catch (e) {
             setError("Veriler yüklenirken bir hata oluştu.");
         } finally {
@@ -89,8 +103,8 @@ export default function AgendaPage() {
                     const point = salesPoints.find(p => p.id === item.salesPointId);
                     map.set(item.salesPointId, {
                         id: item.salesPointId,
-                        title: point?.FirmaAdi || "Bilinmeyen Cari",
-                        subtitle: point ? `${point.Sehir} / ${point.ilce}` : undefined,
+                        title: point?.name || point?.FirmaAdi || "Bilinmeyen Cari",
+                        subtitle: point ? `${point.cityName || point.Sehir || ""} / ${point.district || point.ilce || ""}` : undefined,
                         count: 0,
                         type: "CUSTOMER"
                     });
@@ -138,9 +152,11 @@ export default function AgendaPage() {
         if (!activeFolderId) return null;
         if (activeFolderId === "GENERAL") return { title: "Genel Notlar", subtitle: "Kategorisiz notlar ve görevler." };
         const point = salesPoints.find(p => p.id === activeFolderId);
+        if (!point) return { title: "Bilinmeyen Cari", subtitle: "" };
+
         return {
-            title: point?.FirmaAdi || "Bilinmeyen Cari",
-            subtitle: point ? `${point.Sehir} / ${point.ilce} - ${point.Yetkili || ""}` : ""
+            title: point.name || point.FirmaAdi || "Bilinmeyen Cari",
+            subtitle: `${point.cityName || point.Sehir || ""} / ${point.district || point.ilce || ""} - ${point.authorizedPerson || point.Yetkili || ""}`
         };
     }, [activeFolderId, salesPoints]);
 
@@ -165,13 +181,13 @@ export default function AgendaPage() {
             await saveAgendaItem({
                 type: "NOTE",
                 date: new Date().toISOString().split("T")[0],
-                content: `📁 ${point?.FirmaAdi} için klasör oluşturuldu.`,
+                content: `📁 ${point?.name || point?.FirmaAdi} için klasör oluşturuldu.`,
                 status: "OPEN",
                 salesPointId: newFolderPointId,
                 createdBy: session.email,
                 createdAt: new Date().toISOString()
             });
-            await fetchData(session.email);
+            fetchData(session.email, session);
             openFolder(newFolderPointId);
             setShowNewFolderModal(false);
             setNewFolderPointId("");
@@ -203,7 +219,7 @@ export default function AgendaPage() {
                 status: "OPEN"
             });
 
-            await fetchData(session.email);
+            fetchData(session.email, session);
         } catch (e) {
             setError("Not kaydedilemedi.");
         } finally {
@@ -215,7 +231,7 @@ export default function AgendaPage() {
         if (!confirm("Silmek istediğinize emin misiniz?")) return;
         try {
             await deleteAgendaItem(id);
-            fetchData(session.email); // Don't await strictly to keep UI snappy, or await if needed
+            fetchData(session.email, session); // Don't await strictly to keep UI snappy, or await if needed
         } catch (e) {
             alert("Silinemedi.");
         }
@@ -225,7 +241,7 @@ export default function AgendaPage() {
         try {
             const nextStatus = item.status === "OPEN" ? "DONE" : "OPEN";
             await saveAgendaItem({ ...item, status: nextStatus });
-            fetchData(session.email);
+            fetchData(session.email, session);
         } catch (e) {
             setError("Durum güncellenirken hata oluştu.");
         }
@@ -410,9 +426,9 @@ export default function AgendaPage() {
                             <option value="">Seçiniz...</option>
                             {salesPoints
                                 .filter(p => !folders.find(f => f.id === p.id)) // Hide already created
-                                .sort((a, b) => a.FirmaAdi.localeCompare(b.FirmaAdi))
+                                .sort((a, b) => (a.name || a.FirmaAdi || "").localeCompare(b.name || b.FirmaAdi || ""))
                                 .map(p => (
-                                    <option key={p.id} value={p.id}>{p.FirmaAdi}</option>
+                                    <option key={p.id} value={p.id}>{p.name || p.FirmaAdi}</option>
                                 ))}
                         </select>
 

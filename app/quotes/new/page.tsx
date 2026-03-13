@@ -186,36 +186,40 @@ function NewQuoteContent() {
 
             if (s.role === "sales") setOwnerEmail(s.email);
 
-            // Fetch terms, Sales Points, and Products in parallel
+            // Fetch terms, Sales Points, and Products
             try {
-                const { listTerms, listSalesPoints, listProducts } = await import("@/lib/sheets");
-                const [termsRes, pointsRes, productsRes] = await Promise.all([
-                    listTerms(),
-                    listSalesPoints(),
-                    listProducts()
-                ]);
+                const { listTerms, listProducts } = await import("@/lib/sheets");
 
+                const termsRes = await listTerms();
                 if (termsRes?.terms) setAvailableTerms(termsRes.terms);
 
-                let points = [];
-                if ((pointsRes as any).points) points = (pointsRes as any).points;
-                else if ((pointsRes as any).data?.points) points = (pointsRes as any).data.points;
-                else if (Array.isArray(pointsRes)) points = pointsRes;
-
-                // Filter for Sales Reps
-                if (s.role === "sales") {
-                    points = points.filter((p: any) =>
-                        (p.FirmaEmail || "").toLowerCase() === (s.email || "").toLowerCase()
-                    );
-                }
-
-                setSalesPoints(points);
-
+                const productsRes = await listProducts();
                 let prods = [];
                 if ((productsRes as any).products) prods = (productsRes as any).products;
                 else if ((productsRes as any).data?.products) prods = (productsRes as any).data.products;
                 setProducts(prods);
                 setLoadingProducts(false);
+
+                // Filter for Sales Points / Region Managers via API
+                let cityIds = "";
+                let regionIdsArr = "";
+
+                const userRes = await fetch("/api/users").then(r => r.json());
+                const me = userRes.data?.find((u: any) => u.email === s.email);
+
+                if (me) {
+                    if (me.cityIds) cityIds = me.cityIds.join(",");
+                    if (me.regionIds) regionIdsArr = JSON.stringify(me.regionIds);
+                }
+
+                const pointsUrl = `/api/salesPoints?role=${s.role}&regionId=${s.region || ""}&regionIds=${regionIdsArr}&cityIds=${cityIds}&ownerEmail=${s.email}`;
+                const pointsResNative = await fetch(pointsUrl).then(r => r.json());
+
+                let points = [];
+                if (pointsResNative.success) {
+                    points = pointsResNative.data;
+                }
+                setSalesPoints(points);
 
                 // HANDLE EDIT / DUPLICATE
                 const targetId = editId || duplicateId;
@@ -283,29 +287,20 @@ function NewQuoteContent() {
         };
     };
 
-    // 2. Data Adapter
+    // 2. Data Adapter for Firestore based search
     const adaptPoint = (rawP: any) => {
         if (!rawP) return {};
 
-        // Backend (Code.gs) now returns correct PascalCase keys matched to the screenshot.
-        // Col F "Email" seems to be Sales Person Email based on data "a.coskun@tibcon.com.tr"
-        // Col L "YetkiliEmail" is the Customer Email "otp@gmail.com"
-
         return {
             ...rawP,
-            FirmaAdi: rawP.FirmaAdi || rawP.name,
-            Sehir: rawP.Sehir,
-            ilce: rawP.ilce || rawP.District,
-            Yetkili: rawP.Yetkili,
-            FirmaStatu: rawP.FirmaStatu,
-            // Prioritize YetkiliEmail (Col L) as the contact email. 
-            // Fallback to FirmaEmail (Col F) only if empty, though Col F looks like sales rep email.
-            FirmaEmail: rawP.YetkiliEmail || rawP.FirmaEmail,
-            Telefon: rawP.Telefon,
-            Adres: rawP.Adres,
-            SatisPersoneli: rawP.SatisPersoneli,
-            VergiDairesi: rawP.VergiDairesi,
-            VergiNo: rawP.VergiNo,
+            FirmaAdi: rawP.name || rawP.FirmaAdi,
+            Sehir: rawP.cityName || rawP.Sehir,
+            ilce: rawP.district || rawP.ilce,
+            Yetkili: rawP.authorizedPerson || rawP.Yetkili,
+            FirmaStatu: rawP.groupName || rawP.FirmaStatu || rawP.statu,
+            FirmaEmail: rawP.email || rawP.FirmaEmail || rawP.YetkiliEmail,
+            Telefon: rawP.phone || rawP.Telefon,
+            Adres: rawP.address || rawP.Adres,
             id: rawP.id
         };
     };

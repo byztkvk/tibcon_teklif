@@ -41,6 +41,22 @@ export default function Navbar() {
                     </button>
 
                     <button
+                        onClick={() => router.push("/dashboard")}
+                        className="tibcon-btn tibcon-btn-outline nav-btn-mobile"
+                        style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}
+                    >
+                        <span>📉</span> <span className="hide-text-mobile">Dashboard</span>
+                    </button>
+
+                    <button
+                        onClick={() => router.push("/map")}
+                        className="tibcon-btn tibcon-btn-outline nav-btn-mobile"
+                        style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}
+                    >
+                        <span>🗺️</span> <span className="hide-text-mobile">Bölgem</span>
+                    </button>
+
+                    <button
                         onClick={() => router.push("/agenda")}
                         className="tibcon-btn tibcon-btn-outline nav-btn-mobile"
                         style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}
@@ -64,6 +80,17 @@ export default function Navbar() {
                             style={{ padding: "0.5rem 1rem", fontSize: "0.85rem" }}
                         >
                             <span>📊</span> <span className="hide-text-mobile">Raporlar</span>
+                        </button>
+                    )}
+
+                    {/* ADMIN LINK */}
+                    {JSON.parse(localStorage.getItem("tibcon_session") || "{}")?.role === "admin" && (
+                        <button
+                            onClick={() => router.push("/admin")}
+                            className="tibcon-btn tibcon-btn-outline nav-btn-mobile"
+                            style={{ padding: "0.5rem 1rem", fontSize: "0.85rem", color: "var(--tibcon-black)", borderColor: "var(--tibcon-black)" }}
+                        >
+                            <span>⚙️</span> <span className="hide-text-mobile">Yönetim / Admin</span>
                         </button>
                     )}
 

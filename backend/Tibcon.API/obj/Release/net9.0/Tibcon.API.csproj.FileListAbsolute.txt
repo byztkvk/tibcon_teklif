@@ -1,0 +1,8 @@
+C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API\obj\Release\net9.0\Tibcon.API.csproj.AssemblyReference.cache
+C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API\obj\Release\net9.0\Tibcon.API.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API\obj\Release\net9.0\Tibcon.API.AssemblyInfoInputs.cache
+C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API\obj\Release\net9.0\Tibcon.API.AssemblyInfo.cs
+C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API\obj\Release\net9.0\Tibcon.API.csproj.CoreCompileInputs.cache
+C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API\obj\Release\net9.0\Tibcon.API.MvcApplicationPartsAssemblyInfo.cs
+C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API\obj\Release\net9.0\Tibcon.API.MvcApplicationPartsAssemblyInfo.cache
+C:\Users\bkevu\Desktop\tibcon_teklif\backend\Tibcon.API\obj\Release\net9.0\Tibcon.API.sourcelink.json
